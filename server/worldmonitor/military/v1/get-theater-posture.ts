@@ -268,5 +268,14 @@ export async function getTheaterPosture(
   if (stale) return stale;
   const backup = (await getCachedJson(BACKUP_CACHE_KEY)) as GetTheaterPostureResponse | null;
   if (backup) return backup;
-  return { theaters: [] };
+  return {
+    theaters: POSTURE_THEATERS.map((theater) => ({
+      theater: theater.id,
+      postureLevel: 'normal',
+      activeFlights: 0,
+      trackedVessels: 0,
+      activeOperations: [],
+      assessedAt: Date.now(),
+    })),
+  };
 }

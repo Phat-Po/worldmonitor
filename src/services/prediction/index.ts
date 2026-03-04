@@ -59,6 +59,7 @@ const DIRECT_RAILWAY_POLY_URL = wsRelayUrl
   ? wsRelayUrl.replace('wss://', 'https://').replace('ws://', 'http://').replace(/\/$/, '') + '/polymarket'
   : '';
 const isLocalhostRuntime = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const useFastSinglePassInLocal = isLocalhostRuntime && !DIRECT_RAILWAY_POLY_URL;
 const PROXY_STRIP_KEYS = new Set(['end_date_min', 'active', 'archived']);
 
 const breaker = createCircuitBreaker<PredictionMarket[]>({ name: 'Polymarket', cacheTtlMs: 10 * 60 * 1000, persistCache: true });
@@ -226,6 +227,27 @@ function buildMarketUrl(eventSlug?: string, marketSlug?: string): string | undef
   return undefined;
 }
 
+async function fetchTopMarketsViaSebuf(limit = 80): Promise<PredictionMarket[]> {
+  try {
+    const resp = await client.listPredictionMarkets({
+      category: '',
+      query: '',
+      pageSize: Math.max(20, Math.min(100, limit)),
+      cursor: '',
+    });
+    if (!resp.markets?.length) return [];
+    return resp.markets.map((m) => ({
+      title: m.title,
+      yesPrice: Math.max(0, Math.min(100, (m.yesPrice || 0) * 100)),
+      volume: m.volume || 0,
+      url: m.url || undefined,
+      endDate: m.closesAt ? new Date(m.closesAt).toISOString() : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 async function fetchEventsByTag(tag: string, limit = 30): Promise<PolymarketEvent[]> {
   const response = await polyFetch('events', {
     tag_slug: tag,
@@ -272,6 +294,20 @@ async function fetchTopMarkets(): Promise<PredictionMarket[]> {
 
 export async function fetchPredictions(): Promise<PredictionMarket[]> {
   return breaker.execute(async () => {
+    if (useFastSinglePassInLocal) {
+      const oneShot = await fetchTopMarketsViaSebuf(100);
+      const fastResult = oneShot
+        .filter((m) => !isExcluded(m.title))
+        .filter((m) => !isExpired(m.endDate))
+        .filter((m) => {
+          const discrepancy = Math.abs(m.yesPrice - 50);
+          return discrepancy > 5 || (m.volume && m.volume > 50000);
+        })
+        .sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0))
+        .slice(0, 15);
+      if (fastResult.length > 0) return fastResult;
+    }
+
     const tags = SITE_VARIANT === 'tech' ? TECH_TAGS : GEOPOLITICAL_TAGS;
 
     const eventResults = await Promise.all(tags.map(tag => fetchEventsByTag(tag, 20)));

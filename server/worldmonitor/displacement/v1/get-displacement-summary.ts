@@ -18,6 +18,16 @@ import { cachedFetchJson } from '../../../_shared/redis';
 const REDIS_CACHE_KEY = 'displacement:summary:v1';
 const REDIS_CACHE_TTL = 43200; // 12 hr — annual UNHCR data, very slow-moving
 
+function isNoRelayLocalMode(): boolean {
+  const env = String(process.env.VERCEL_ENV || process.env.NODE_ENV || '').toLowerCase();
+  return !process.env.WS_RELAY_URL && (env === 'development' || env === 'dev' || env === '' || env === 'local');
+}
+
+const localNoRelayMode = isNoRelayLocalMode();
+const UNHCR_PAGE_LIMIT = localNoRelayMode ? 300 : 3000;
+const UNHCR_MAX_PAGES = localNoRelayMode ? 5 : 6;
+const UNHCR_TIMEOUT_MS = localNoRelayMode ? 6_000 : 8_000;
+
 // ---------- Country centroids (ISO3 -> [lat, lon]) ----------
 
 const COUNTRY_CENTROIDS: Record<string, [number, number]> = {
@@ -49,34 +59,49 @@ interface UnhcrRawItem {
 // ---------- Helpers ----------
 
 /** Paginate through all UNHCR Population API pages for a given year. */
+async function fetchUnhcrPage(year: number, limit: number, page: number): Promise<{ items: UnhcrRawItem[]; maxPages: number | null } | null> {
+  const response = await fetch(
+    `https://api.unhcr.org/population/v1/population/?year=${year}&limit=${limit}&page=${page}&coo_all=true&coa_all=true`,
+    { headers: { Accept: 'application/json', 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(UNHCR_TIMEOUT_MS) },
+  );
+  if (!response.ok) return null;
+  const data = await response.json();
+  const items: UnhcrRawItem[] = Array.isArray(data.items) ? data.items : [];
+  const parsedMaxPages = Number(data.maxPages);
+  return {
+    items,
+    maxPages: Number.isFinite(parsedMaxPages) && parsedMaxPages > 0 ? parsedMaxPages : null,
+  };
+}
+
 async function fetchUnhcrYearItems(year: number): Promise<UnhcrRawItem[] | null> {
-  const limit = 10000;
-  const maxPageGuard = 25;
+  const limit = UNHCR_PAGE_LIMIT;
+  const maxPageGuard = UNHCR_MAX_PAGES;
   const items: UnhcrRawItem[] = [];
 
-  for (let page = 1; page <= maxPageGuard; page++) {
-    const response = await fetch(
-      `https://api.unhcr.org/population/v1/population/?year=${year}&limit=${limit}&page=${page}&coo_all=true&coa_all=true`,
-      { headers: { Accept: 'application/json', 'User-Agent': CHROME_UA }, signal: AbortSignal.timeout(10_000) },
-    );
+  const firstPage = await fetchUnhcrPage(year, limit, 1);
+  if (!firstPage) return null;
+  if (firstPage.items.length === 0) return [];
+  items.push(...firstPage.items);
 
-    if (!response.ok) return null;
+  const cappedMaxPages = firstPage.maxPages
+    ? Math.min(maxPageGuard, firstPage.maxPages)
+    : maxPageGuard;
+  if (cappedMaxPages <= 1) return items;
 
-    const data = await response.json();
-    const pageItems: UnhcrRawItem[] = Array.isArray(data.items) ? data.items : [];
-    if (pageItems.length === 0) break;
-    items.push(...pageItems);
+  const remainingPages = Array.from({ length: cappedMaxPages - 1 }, (_, idx) => idx + 2);
+  const settled = await Promise.allSettled(
+    remainingPages.map((page) => fetchUnhcrPage(year, limit, page)),
+  );
 
-    const maxPages = Number(data.maxPages);
-    if (Number.isFinite(maxPages) && maxPages > 0) {
-      if (page >= maxPages) break;
-      continue;
-    }
-
-    if (pageItems.length < limit) break;
+  for (const pageResult of settled) {
+    if (pageResult.status !== 'fulfilled') continue;
+    const payload = pageResult.value;
+    if (!payload || payload.items.length === 0) continue;
+    items.push(...payload.items);
   }
 
-  return items;
+  return items.length > 0 ? items : null;
 }
 
 /** Look up centroid coordinates for an ISO3 country code. */
@@ -151,14 +176,24 @@ export async function getDisplacementSummary(
       let dataYearUsed = currentYear;
 
       if (requestYear > 0) {
-        const items = await fetchUnhcrYearItems(requestYear);
+        let items: UnhcrRawItem[] | null = null;
+        try {
+          items = await fetchUnhcrYearItems(requestYear);
+        } catch {
+          items = null;
+        }
         if (items && items.length > 0) {
           rawItems = items;
           dataYearUsed = requestYear;
         }
       } else {
         for (let y = currentYear; y >= currentYear - 2; y--) {
-          const items = await fetchUnhcrYearItems(y);
+          let items: UnhcrRawItem[] | null = null;
+          try {
+            items = await fetchUnhcrYearItems(y);
+          } catch {
+            items = null;
+          }
           if (!items) continue;
           if (items.length > 0) {
             rawItems = items;

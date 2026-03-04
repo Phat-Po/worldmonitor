@@ -61,6 +61,7 @@ export interface EventHandlerCallbacks {
   syncDataFreshnessWithLayers: () => void;
   ensureCorrectZones: () => void;
   refreshOpenCountryBrief?: () => void;
+  refreshUnavailablePanels: () => Promise<number>;
 }
 
 export class EventHandlerManager implements AppModule {
@@ -230,6 +231,27 @@ export class EventHandlerManager implements AppModule {
   }
 
   private setupEventListeners(): void {
+    const refreshUnavailableBtn = document.getElementById('refreshUnavailableBtn') as HTMLButtonElement | null;
+    refreshUnavailableBtn?.addEventListener('click', async () => {
+      if (refreshUnavailableBtn.disabled) return;
+      refreshUnavailableBtn.disabled = true;
+      refreshUnavailableBtn.classList.add('loading');
+      try {
+        const refreshed = await this.callbacks.refreshUnavailablePanels();
+        if (refreshed === 0) {
+          this.showToast(t('common.noUnavailablePanels'));
+        } else {
+          this.showToast(t('common.refreshedPanels', { count: String(refreshed) }));
+        }
+      } catch (error) {
+        console.error('[RefreshUnavailable] Failed:', error);
+        this.showToast(t('common.failedToLoad'));
+      } finally {
+        refreshUnavailableBtn.disabled = false;
+        refreshUnavailableBtn.classList.remove('loading');
+      }
+    });
+
     document.getElementById('searchBtn')?.addEventListener('click', () => {
       this.callbacks.updateSearchIndex();
       this.ctx.searchModal?.open();

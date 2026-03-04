@@ -201,10 +201,12 @@ const ALLOWED_DOMAINS = [
   'gcaptain.com',
   // International Organizations
   'news.un.org',
+  'www.un.org',
   'www.iaea.org',
   'www.who.int',
   'www.cisa.gov',
   'www.crisisgroup.org',
+  'www.eia.gov',
   // Think Tanks & Research (Added 2026-01-29)
   'rusi.org',
   'warontherocks.com',
@@ -325,12 +327,36 @@ const ALLOWED_DOMAINS = [
   // US broadcast & print news
   'www.pbs.org',
   'feeds.abcnews.com',
+  'abcnews.go.com',
+  'abcnews.com',
   'feeds.nbcnews.com',
   'www.cbsnews.com',
   'moxie.foxnews.com',
   'feeds.content.dowjones.io',
   'thehill.com',
 ];
+
+const ALLOWED_DOMAIN_SET = new Set(ALLOWED_DOMAINS.map((d) => d.toLowerCase()));
+
+function normalizeHostname(hostname) {
+  return String(hostname || '').trim().toLowerCase();
+}
+
+function isAllowedHostname(hostname) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) return false;
+  const bare = normalized.replace(/^www\./, '');
+  const withWww = normalized.startsWith('www.') ? normalized : `www.${normalized}`;
+  return ALLOWED_DOMAIN_SET.has(normalized) || ALLOWED_DOMAIN_SET.has(bare) || ALLOWED_DOMAIN_SET.has(withWww);
+}
+
+function isRelayOnlyHostname(hostname) {
+  const normalized = normalizeHostname(hostname);
+  if (!normalized) return false;
+  const bare = normalized.replace(/^www\./, '');
+  const withWww = normalized.startsWith('www.') ? normalized : `www.${normalized}`;
+  return RELAY_ONLY_DOMAINS.has(normalized) || RELAY_ONLY_DOMAINS.has(bare) || RELAY_ONLY_DOMAINS.has(withWww);
+}
 
 export default async function handler(req) {
   const corsHeaders = getCorsHeaders(req, 'GET, OPTIONS');
@@ -378,17 +404,15 @@ export default async function handler(req) {
     const parsedUrl = new URL(feedUrl);
 
     // Security: Check if domain is allowed (normalize www prefix)
-    const hostname = parsedUrl.hostname;
-    const bare = hostname.replace(/^www\./, '');
-    const withWww = hostname.startsWith('www.') ? hostname : `www.${hostname}`;
-    if (!ALLOWED_DOMAINS.includes(hostname) && !ALLOWED_DOMAINS.includes(bare) && !ALLOWED_DOMAINS.includes(withWww)) {
+    const hostname = normalizeHostname(parsedUrl.hostname);
+    if (!isAllowedHostname(hostname)) {
       return new Response(JSON.stringify({ error: 'Domain not allowed' }), {
         status: 403,
         headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
-    const isRelayOnly = RELAY_ONLY_DOMAINS.has(hostname);
+    const isRelayOnly = isRelayOnlyHostname(hostname);
 
     // Google News is slow - use longer timeout
     const isGoogleNews = feedUrl.includes('news.google.com');
@@ -408,7 +432,7 @@ export default async function handler(req) {
         const location = response.headers.get('location');
         if (location) {
           const redirectUrl = new URL(location, feedUrl);
-          if (!ALLOWED_DOMAINS.includes(redirectUrl.hostname)) {
+          if (!isAllowedHostname(redirectUrl.hostname)) {
             throw new Error('Redirect to disallowed domain');
           }
           return fetchWithTimeout(redirectUrl.href, {
@@ -431,7 +455,11 @@ export default async function handler(req) {
       // Skip direct fetch entirely — these domains block Vercel IPs
       response = await fetchViaRailway(feedUrl, timeout);
       usedRelay = !!response;
-      if (!response) throw new Error(`Railway relay unavailable for relay-only domain: ${hostname}`);
+      if (!response) {
+        // In local/dev environments relay may be absent; try direct fetch anyway.
+        response = await fetchDirect();
+        usedRelay = false;
+      }
     } else {
       try {
         response = await fetchDirect();
@@ -468,11 +496,12 @@ export default async function handler(req) {
       },
     });
   } catch (error) {
-    const isTimeout = error.name === 'AbortError';
-    console.error('RSS proxy error:', feedUrl, error.message);
+    const message = error?.message || String(error);
+    const isTimeout = error?.name === 'AbortError';
+    console.error('RSS proxy error:', feedUrl, message);
     return new Response(JSON.stringify({
       error: isTimeout ? 'Feed timeout' : 'Failed to fetch feed',
-      details: error.message,
+      details: message,
       url: feedUrl
     }), {
       status: isTimeout ? 504 : 502,

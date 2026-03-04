@@ -1834,12 +1834,12 @@ Transactions are sampled at 10% to balance observability with cost. Release trac
 git clone https://github.com/koala73/worldmonitor.git
 cd worldmonitor
 npm install
-vercel dev       # Runs frontend + all 60+ API edge functions
+npm run dev:vercel       # Runs frontend + all 60+ API edge functions
 ```
 
 Open [http://localhost:3000](http://localhost:3000)
 
-> **Note**: `vercel dev` requires the [Vercel CLI](https://vercel.com/docs/cli) (`npm i -g vercel`). If you use `npm run dev` instead, only the frontend starts — news feeds and API-dependent panels won't load. See [Self-Hosting](#self-hosting) for details.
+> **Note**: `npm run dev:vercel` uses `npx vercel@latest dev`, so a global Vercel install is not required. If you use `npm run dev` instead, only the frontend starts — news feeds and API-dependent panels won't load. See [Self-Hosting](#self-hosting) for details.
 
 ### Environment Variables (Optional)
 
@@ -1893,6 +1893,14 @@ vercel dev                   # Starts on http://localhost:3000
 ```
 
 > **Important**: Use `vercel dev` instead of `npm run dev`. The Vercel CLI emulates the edge runtime locally so all `api/` endpoints work. Plain `npm run dev` only starts Vite and the API layer won't be available.
+
+If your network requires a system proxy/VPN (common in CN environments), use:
+
+```bash
+npm run dev:vercel:proxy -- --listen 3100
+```
+
+This launcher auto-detects macOS system proxy from `scutil --proxy`, sets `NODE_USE_ENV_PROXY=1`, and applies `HTTP_PROXY/HTTPS_PROXY` so server-side `fetch()` in local edge functions follows the same route as your browser.
 
 ### Option 3: Static Frontend Only
 

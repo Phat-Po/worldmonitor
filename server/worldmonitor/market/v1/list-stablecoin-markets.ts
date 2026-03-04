@@ -9,7 +9,7 @@ import type {
   ListStablecoinMarketsResponse,
   Stablecoin,
 } from '../../../../src/generated/server/worldmonitor/market/v1/service_server';
-import { UPSTREAM_TIMEOUT_MS, parseStringArray } from './_shared';
+import { UPSTREAM_TIMEOUT_MS, fetchCryptoCompareQuotes, parseStringArray } from './_shared';
 import { CHROME_UA } from '../../../_shared/constants';
 import { cachedFetchJson } from '../../../_shared/redis';
 
@@ -42,6 +42,26 @@ interface CoinGeckoStablecoinItem {
   image: string;
 }
 
+const STABLECOIN_META: Record<string, { symbol: string; name: string }> = {
+  tether: { symbol: 'USDT', name: 'Tether' },
+  'usd-coin': { symbol: 'USDC', name: 'USD Coin' },
+  dai: { symbol: 'DAI', name: 'Dai' },
+  'first-digital-usd': { symbol: 'FDUSD', name: 'First Digital USD' },
+  'ethena-usde': { symbol: 'USDE', name: 'Ethena USDe' },
+};
+
+function deriveStablecoinSymbol(id: string): string {
+  const known = STABLECOIN_META[id]?.symbol;
+  if (known) return known;
+  return id.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 12) || id.toUpperCase();
+}
+
+function deriveStablecoinName(id: string): string {
+  const known = STABLECOIN_META[id]?.name;
+  if (known) return known;
+  return id.replace(/[-_]+/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 // ========================================================================
 // Handler
 // ========================================================================
@@ -64,39 +84,75 @@ export async function listStablecoinMarkets(
 
   try {
   const result = await cachedFetchJson<ListStablecoinMarketsResponse>(redisKey, REDIS_CACHE_TTL, async () => {
-    const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coins}&order=market_cap_desc&sparkline=false&price_change_percentage=7d`;
-    const resp = await fetch(url, {
-      headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
+    const stablecoins: Stablecoin[] = [];
+    try {
+      const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coins}&order=market_cap_desc&sparkline=false&price_change_percentage=7d`;
+      const resp = await fetch(url, {
+        headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
 
-    if (resp.status === 429 && stablecoinCache) return null;
-    if (!resp.ok) throw new Error(`CoinGecko HTTP ${resp.status}`);
+      if (resp.status === 429 && stablecoinCache) return null;
+      if (!resp.ok) throw new Error(`CoinGecko HTTP ${resp.status}`);
 
-    const data = (await resp.json()) as CoinGeckoStablecoinItem[];
+      const data = (await resp.json()) as CoinGeckoStablecoinItem[];
+      for (const coin of data) {
+        const price = coin.current_price || 0;
+        const deviation = Math.abs(price - 1.0);
+        let pegStatus: string;
+        if (deviation <= 0.005) pegStatus = 'ON PEG';
+        else if (deviation <= 0.01) pegStatus = 'SLIGHT DEPEG';
+        else pegStatus = 'DEPEGGED';
 
-    const stablecoins: Stablecoin[] = data.map(coin => {
-      const price = coin.current_price || 0;
-      const deviation = Math.abs(price - 1.0);
-      let pegStatus: string;
-      if (deviation <= 0.005) pegStatus = 'ON PEG';
-      else if (deviation <= 0.01) pegStatus = 'SLIGHT DEPEG';
-      else pegStatus = 'DEPEGGED';
+        stablecoins.push({
+          id: coin.id,
+          symbol: (coin.symbol || '').toUpperCase(),
+          name: coin.name,
+          price,
+          deviation: +(deviation * 100).toFixed(3),
+          pegStatus,
+          marketCap: coin.market_cap || 0,
+          volume24h: coin.total_volume || 0,
+          change24h: coin.price_change_percentage_24h || 0,
+          change7d: coin.price_change_percentage_7d_in_currency || 0,
+          image: coin.image || '',
+        });
+      }
+    } catch {
+      // fall through to CryptoCompare fallback
+    }
 
-      return {
-        id: coin.id,
-        symbol: (coin.symbol || '').toUpperCase(),
-        name: coin.name,
-        price,
-        deviation: +(deviation * 100).toFixed(3),
-        pegStatus,
-        marketCap: coin.market_cap || 0,
-        volume24h: coin.total_volume || 0,
-        change24h: coin.price_change_percentage_24h || 0,
-        change7d: coin.price_change_percentage_7d_in_currency || 0,
-        image: coin.image || '',
-      };
-    });
+    if (stablecoins.length === 0) {
+      const coinIds = coins.split(',').map((id) => id.trim()).filter(Boolean);
+      const symbols = coinIds.map(deriveStablecoinSymbol);
+      const cc = await fetchCryptoCompareQuotes(symbols);
+
+      for (const id of coinIds) {
+        const symbol = deriveStablecoinSymbol(id);
+        const row = cc[symbol];
+        if (!row || !Number.isFinite(row.PRICE)) continue;
+        const price = Number(row.PRICE);
+        const deviation = Math.abs(price - 1.0);
+        let pegStatus: string;
+        if (deviation <= 0.005) pegStatus = 'ON PEG';
+        else if (deviation <= 0.01) pegStatus = 'SLIGHT DEPEG';
+        else pegStatus = 'DEPEGGED';
+
+        stablecoins.push({
+          id,
+          symbol,
+          name: deriveStablecoinName(id),
+          price,
+          deviation: +(deviation * 100).toFixed(3),
+          pegStatus,
+          marketCap: Number(row.MKTCAP || 0),
+          volume24h: Number(row.TOTALVOLUME24HTO || row.VOLUME24HOURTO || 0),
+          change24h: Number(row.CHANGEPCT24HOUR || 0),
+          change7d: 0,
+          image: '',
+        });
+      }
+    }
 
     if (stablecoins.length === 0) return null;
 

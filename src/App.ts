@@ -43,6 +43,14 @@ const CYBER_LAYER_ENABLED = import.meta.env.VITE_ENABLE_CYBER_LAYER === 'true';
 
 export type { CountryBriefSignals } from '@/app/app-context';
 
+type RefreshablePanel = {
+  getElement: () => HTMLElement;
+  refresh?: () => void | Promise<void>;
+  refreshAll?: () => void | Promise<void>;
+  fetchData?: () => void | Promise<void>;
+  fetchStatus?: () => void | Promise<void>;
+};
+
 export class App {
   private state: AppContext;
   private pendingDeepLinkCountry: string | null = null;
@@ -205,7 +213,7 @@ export class App {
     }
     // One-time migration: reduce default-enabled sources (full variant only)
     if (currentVariant === 'full') {
-      const baseKey = 'worldmonitor-sources-reduction-v3';
+      const baseKey = 'worldmonitor-sources-reduction-v4';
       if (!localStorage.getItem(baseKey)) {
         const defaultDisabled = computeDefaultDisabledSources();
         saveToStorage(STORAGE_KEYS.disabledFeeds, defaultDisabled);
@@ -307,6 +315,7 @@ export class App {
       loadAllData: () => this.dataLoader.loadAllData(),
       updateMonitorResults: () => this.dataLoader.updateMonitorResults(),
       loadSecurityAdvisories: () => this.dataLoader.loadSecurityAdvisories(),
+      refreshPanel: (panelKey) => this.refreshPanelByKey(panelKey),
     });
 
     this.eventHandlers = new EventHandlerManager(this.state, {
@@ -319,6 +328,7 @@ export class App {
       syncDataFreshnessWithLayers: () => this.dataLoader.syncDataFreshnessWithLayers(),
       ensureCorrectZones: () => this.panelLayout.ensureCorrectZones(),
       refreshOpenCountryBrief: () => this.countryIntel.refreshOpenBrief(),
+      refreshUnavailablePanels: () => this.refreshUnavailablePanels(),
     });
 
     // Wire cross-module callback: DataLoader → SearchManager
@@ -550,6 +560,157 @@ export class App {
         this.eventHandlers.syncUrlState();
       }, DEEP_LINK_INITIAL_DELAY_MS);
     }
+  }
+
+  private isNewsPanelKey(panelKey: string): boolean {
+    if (this.state.newsPanels[panelKey]) return true;
+    if (!panelKey.endsWith('-news')) return false;
+    const category = panelKey.slice(0, -'-news'.length);
+    return !!this.state.newsPanels[category];
+  }
+
+  private isPanelUnavailable(panelKey: string): boolean {
+    const panel = this.state.panels[panelKey] as RefreshablePanel | undefined;
+    if (!panel) return false;
+    const panelElement = panel.getElement();
+    const header = panelElement.querySelector('.panel-header');
+    if (header?.classList.contains('panel-header-error')) return true;
+    const badge = header?.querySelector('.panel-data-badge');
+    if (badge?.classList.contains('unavailable')) return true;
+
+    const content = panelElement.querySelector('.panel-content');
+    if (!content) return false;
+    if (content.querySelector('.error-message, .config-error-message, .service-status-error, .tech-events-error')) {
+      return true;
+    }
+
+    const text = (content.textContent ?? '').trim().toLowerCase();
+    if (!text) return false;
+    return /(failed to|temporarily unavailable|unavailable|no news available|加载.*失败|无可用|不可用|失败)/.test(text);
+  }
+
+  private async runPanelRefreshMethod(panelKey: string): Promise<boolean> {
+    const panel = this.state.panels[panelKey] as RefreshablePanel | undefined;
+    if (!panel) return false;
+    if (typeof panel.refreshAll === 'function') {
+      await panel.refreshAll();
+      return true;
+    }
+    if (typeof panel.refresh === 'function') {
+      await panel.refresh();
+      return true;
+    }
+    if (typeof panel.fetchData === 'function') {
+      await panel.fetchData();
+      return true;
+    }
+    if (typeof panel.fetchStatus === 'function') {
+      await panel.fetchStatus();
+      return true;
+    }
+    return false;
+  }
+
+  private getPanelRefreshTask(panelKey: string): { actionKey: string; run: () => Promise<void> } | null {
+    if (this.isNewsPanelKey(panelKey)) {
+      return { actionKey: 'news', run: () => this.dataLoader.loadNews() };
+    }
+
+    switch (panelKey) {
+      case 'markets':
+      case 'heatmap':
+      case 'commodities':
+      case 'crypto':
+        return { actionKey: 'markets', run: () => this.dataLoader.loadMarkets() };
+      case 'polymarket':
+        return { actionKey: 'predictions', run: () => this.dataLoader.loadPredictions() };
+      case 'economic':
+        return {
+          actionKey: 'economic-bundle',
+          run: async () => {
+            await Promise.allSettled([
+              this.dataLoader.loadFredData(),
+              this.dataLoader.loadOilAnalytics(),
+              this.dataLoader.loadGovernmentSpending(),
+              this.dataLoader.loadBisData(),
+            ]);
+          },
+        };
+      case 'satellite-fires':
+        return { actionKey: 'firms', run: () => this.dataLoader.loadFirmsData() };
+      case 'trade-policy':
+        return { actionKey: 'trade-policy', run: () => this.dataLoader.loadTradePolicy() };
+      case 'supply-chain':
+        return { actionKey: 'supply-chain', run: () => this.dataLoader.loadSupplyChain() };
+      case 'ucdp-events':
+      case 'displacement':
+      case 'climate':
+      case 'population-exposure':
+      case 'oref-sirens':
+        return { actionKey: 'intelligence', run: () => this.dataLoader.loadIntelligenceSignals() };
+      case 'security-advisories':
+        return { actionKey: 'security-advisories', run: () => this.dataLoader.loadSecurityAdvisories() };
+      case 'telegram-intel':
+        return { actionKey: 'telegram-intel', run: () => this.dataLoader.loadTelegramIntel() };
+      case 'gdelt-intel':
+        return {
+          actionKey: 'gdelt-intel',
+          run: async () => {
+            const refreshed = await this.runPanelRefreshMethod(panelKey);
+            if (!refreshed) await this.dataLoader.loadIntelligenceSignals();
+          },
+        };
+      default:
+        const panel = this.state.panels[panelKey] as RefreshablePanel | undefined;
+        const hasDirectRefresh =
+          !!panel
+          && (
+            typeof panel.refreshAll === 'function'
+            || typeof panel.refresh === 'function'
+            || typeof panel.fetchData === 'function'
+            || typeof panel.fetchStatus === 'function'
+          );
+        if (!hasDirectRefresh) {
+          return { actionKey: 'all-data', run: () => this.dataLoader.loadAllData() };
+        }
+        return {
+          actionKey: `panel:${panelKey}`,
+          run: async () => {
+            const refreshed = await this.runPanelRefreshMethod(panelKey);
+            if (!refreshed) await this.dataLoader.loadAllData();
+          },
+        };
+    }
+  }
+
+  private async refreshPanelByKey(panelKey: string): Promise<void> {
+    const task = this.getPanelRefreshTask(panelKey);
+    if (!task) return;
+    await task.run();
+  }
+
+  private async refreshUnavailablePanels(): Promise<number> {
+    const unavailablePanels = Object.keys(this.state.panels).filter((panelKey) => {
+      const panel = this.state.panels[panelKey];
+      if (!panel) return false;
+      if (this.state.panelSettings[panelKey]?.enabled === false) return false;
+      if (panel.getElement().classList.contains('hidden')) return false;
+      return this.isPanelUnavailable(panelKey);
+    });
+
+    if (unavailablePanels.length === 0) return 0;
+
+    const actions = new Map<string, () => Promise<void>>();
+    for (const panelKey of unavailablePanels) {
+      const task = this.getPanelRefreshTask(panelKey);
+      if (!task) continue;
+      if (!actions.has(task.actionKey)) {
+        actions.set(task.actionKey, task.run);
+      }
+    }
+
+    await Promise.allSettled(Array.from(actions.values()).map((run) => run()));
+    return unavailablePanels.length;
   }
 
   private setupRefreshIntervals(): void {

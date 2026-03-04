@@ -2,6 +2,30 @@
 
 This project now supports runtime tuning for RSS connectivity and better feed failure attribution.
 
+## Round-3 panel strategy (2026-03-05)
+
+Execution order used in this fork:
+
+1. Relay-backed panel recovery
+2. `.env.local` CN template / operator setup
+3. Key-backed panel recovery
+
+Use these scripts:
+
+```bash
+# check relay reachability (rss/telegram/oref/yahoo/opensky)
+npm run relay:smoke
+
+# check key readiness for round-2 panels
+npm run keys:check
+```
+
+Template for operators:
+
+```bash
+cp .env.local.cn.example .env.local
+```
+
 ## New environment variables
 
 - `RSS_PROXY_EXTRA_DOMAINS`
@@ -20,15 +44,15 @@ This project now supports runtime tuning for RSS connectivity and better feed fa
 
 - `RSS_DIGEST_FEED_TIMEOUT_MS`
   - Server-side digest per-feed timeout in milliseconds.
-  - Default: `15000`.
+  - Default: `9000` without relay, `10000` with relay.
 
 - `RSS_DIGEST_OVERALL_DEADLINE_MS`
   - Server-side digest total deadline in milliseconds.
-  - Default: `60000`.
+  - Default: `32000` without relay, `40000` with relay.
 
 - `RSS_DIGEST_BATCH_CONCURRENCY`
   - Server-side digest feed concurrency (`1-20`).
-  - Default: `8`.
+  - Default: `12` without relay, `10` with relay.
 
 ## New response field (news digest)
 
@@ -49,3 +73,15 @@ Compatibility note:
 
 - Existing `feedStatuses` is preserved.
 - Existing clients that only read `feedStatuses` do not need to change.
+
+## Current triage buckets (CN local)
+
+See:
+
+- `docs/rss-diagnostics/2026-03-05-round3-panel-triage.md`
+
+Buckets:
+
+- `可无 key 本地可修`
+- `需要 relay`
+- `需要 key`

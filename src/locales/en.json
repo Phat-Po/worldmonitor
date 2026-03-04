@@ -132,6 +132,8 @@
     "world": "WORLD",
     "tech": "TECH",
     "live": "LIVE",
+    "refreshUnavailable": "Refresh Unavailable",
+    "refreshUnavailableTitle": "Refresh unavailable panels",
     "search": "Search",
     "settings": "SETTINGS",
     "sources": "SOURCES",
@@ -2329,6 +2331,8 @@
     "currentVariant": "(current)",
     "retry": "Retry",
     "refresh": "Refresh",
+    "noUnavailablePanels": "No unavailable panels right now",
+    "refreshedPanels": "Refreshed {{count}} unavailable panels",
     "all": "All"
   }
 }

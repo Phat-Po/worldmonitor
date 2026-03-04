@@ -202,9 +202,10 @@ export class DataLoaderManager implements AppModule {
   private readonly digestRequestTimeoutMs = 30_000;
   private readonly digestBreakerCooldownMs = 5 * 60 * 1000;
   private readonly persistedDigestMaxAgeMs = 6 * 60 * 60 * 1000;
-  private readonly perFeedFallbackCategoryFeedLimit = 3;
+  private readonly perFeedFallbackCategoryFeedLimit = 6;
   private readonly perFeedFallbackIntelFeedLimit = 6;
   private readonly perFeedFallbackBatchSize = 2;
+  private readonly digestRescueFeedLimit = 8;
   private lastGoodDigest: ListFeedDigestWithDetails | null = null;
 
   constructor(ctx: AppContext, callbacks: DataLoaderCallbacks) {
@@ -652,9 +653,25 @@ export class DataLoaderManager implements AppModule {
         let items = (digest.categories[category]?.items ?? [])
           .map(protoItemToNewsItem)
           .filter(i => enabledNames.has(i.source));
-        const digestIssue = items.length === 0
+        let digestIssue = items.length === 0
           ? this.summarizeDigestIssuesForCategory(category, digest, enabledNames)
           : null;
+
+        // Digest can return a category that has items only from disabled/failed sources.
+        // In that case, opportunistically rescue with a wider per-feed fetch sweep.
+        if (items.length === 0 && this.isPerFeedFallbackEnabled()) {
+          const rescueFeeds = this.selectLimitedFeeds(enabledFeeds, this.digestRescueFeedLimit);
+          if (rescueFeeds.length > 0) {
+            console.warn(`[News] Digest empty for "${category}", attempting per-feed rescue (${rescueFeeds.length} feeds)`);
+            const rescuedItems = await fetchCategoryFeeds(rescueFeeds, {
+              batchSize: this.perFeedFallbackBatchSize,
+            });
+            if (rescuedItems.length > 0) {
+              items = rescuedItems;
+              digestIssue = null;
+            }
+          }
+        }
 
         ingestHeadlines(items.map(i => ({ title: i.title, pubDate: i.pubDate, source: i.source, link: i.link })));
 
@@ -1430,6 +1447,10 @@ export class DataLoaderManager implements AppModule {
           result = await fetchUcdpEvents();
         }
         if (!result.success) {
+          (this.ctx.panels['ucdp-events'] as UcdpEventsPanel)?.setEvents([]);
+          if (this.ctx.mapLayers.ucdpEvents) {
+            this.ctx.map?.setUcdpEvents([]);
+          }
           dataFreshness.recordError('ucdp_events', 'UCDP events unavailable (retaining prior event state)');
           return;
         }
@@ -1452,6 +1473,10 @@ export class DataLoaderManager implements AppModule {
       try {
         const unhcrResult = await fetchUnhcrPopulation();
         if (!unhcrResult.ok) {
+          (this.ctx.panels['displacement'] as DisplacementPanel)?.setData(unhcrResult.data);
+          if (this.ctx.mapLayers.displacement) {
+            this.ctx.map?.setDisplacementFlows(unhcrResult.data.topFlows || []);
+          }
           dataFreshness.recordError('unhcr', 'UNHCR displacement unavailable (retaining prior displacement state)');
           return;
         }

@@ -716,6 +716,30 @@ canvas,
   color: var(--accent);
 }
 
+.refresh-unavailable-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: border-color 0.2s, color 0.2s, opacity 0.2s;
+}
+
+.refresh-unavailable-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.refresh-unavailable-btn.loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .copy-link-btn {
   padding: 4px 10px;
   background: transparent;
@@ -1267,6 +1291,28 @@ body.panel-resize-active iframe {
   color: var(--semantic-critical);
   border-color: rgba(255, 139, 139, 0.45);
   background: rgba(255, 139, 139, 0.12);
+}
+
+.panel-refresh-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  transition: border-color 0.2s, color 0.2s, opacity 0.2s;
+}
+
+.panel-refresh-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.panel-refresh-btn.loading {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 /* Panel Summarize Button */

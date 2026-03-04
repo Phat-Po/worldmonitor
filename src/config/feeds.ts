@@ -35,6 +35,7 @@ export const SOURCE_TIERS: Record<string, number> = {
   'Axios': 2,
   'EuroNews': 2,
   'France 24': 2,
+  'France 24 World': 2,
   'Le Monde': 2,
   // Spanish
   'El País': 2,
@@ -115,6 +116,8 @@ export const SOURCE_TIERS: Record<string, number> = {
   'Brookings': 3,
   'Carnegie': 3,
   'IAEA': 1,
+  'IAEA Energy': 1,
+  'EIA Press': 1,
   'WHO': 1,
   'UNHCR': 1,
   'Xinhua': 3,
@@ -316,6 +319,7 @@ export const SOURCE_TYPES: Record<string, SourceType> = {
   'Treasury': 'gov', 'DOJ': 'gov', 'DHS': 'gov', 'CDC': 'gov',
   'FEMA': 'gov', 'Federal Reserve': 'gov', 'SEC': 'gov',
   'UN News': 'gov', 'CISA': 'gov',
+  'EIA Press': 'gov', 'IAEA Energy': 'gov',
 
   // Intel/Defense specialty
   'Defense One': 'intel', 'Breaking Defense': 'intel', 'The War Zone': 'intel',
@@ -335,7 +339,7 @@ export const SOURCE_TYPES: Record<string, SourceType> = {
   'Guardian World': 'mainstream', 'Guardian ME': 'mainstream',
   'NPR News': 'mainstream', 'Al Jazeera': 'mainstream',
   'CNN World': 'mainstream', 'Politico': 'mainstream', 'Axios': 'mainstream',
-  'EuroNews': 'mainstream', 'France 24': 'mainstream', 'Le Monde': 'mainstream',
+  'EuroNews': 'mainstream', 'France 24': 'mainstream', 'France 24 World': 'mainstream', 'Le Monde': 'mainstream',
   // European Addition
   'El País': 'mainstream', 'El Mundo': 'mainstream', 'BBC Mundo': 'mainstream',
   'Tagesschau': 'mainstream', 'Der Spiegel': 'mainstream', 'Die Zeit': 'mainstream', 'DW News': 'mainstream',
@@ -463,6 +467,7 @@ const FULL_FEEDS: Record<string, Feed[]> = {
   politics: [
     { name: 'BBC World', url: rss('https://feeds.bbci.co.uk/news/world/rss.xml') },
     { name: 'Guardian World', url: rss('https://www.theguardian.com/world/rss') },
+    { name: 'France 24 World', url: rss('https://www.france24.com/en/rss') },
     { name: 'AP News', url: rss('https://news.google.com/rss/search?q=site:apnews.com&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Reuters World', url: rss('https://news.google.com/rss/search?q=site:reuters.com+world&hl=en-US&gl=US&ceid=US:en') },
     { name: 'CNN World', url: rss('https://news.google.com/rss/search?q=site:cnn.com+world+news+when:1d&hl=en-US&gl=US&ceid=US:en') },
@@ -612,6 +617,7 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'Layoffs News', url: rss('https://news.google.com/rss/search?q=(layoffs+OR+"job+cuts"+OR+"workforce+reduction")+when:3d&hl=en-US&gl=US&ceid=US:en') },
   ],
   thinktanks: [
+    { name: 'Stimson Center', url: rss('https://www.stimson.org/feed/') },
     { name: 'Foreign Policy', url: rss('https://foreignpolicy.com/feed/') },
     { name: 'Atlantic Council', url: railwayRss('https://www.atlanticcouncil.org/feed/') },
     { name: 'Foreign Affairs', url: rss('https://www.foreignaffairs.com/rss.xml') },
@@ -640,21 +646,23 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'UNHCR', url: rss('https://news.google.com/rss/search?q=site:unhcr.org+OR+UNHCR+refugees+when:3d&hl=en-US&gl=US&ceid=US:en') },
   ],
   africa: [
+    { name: 'Africanews', url: { en: rss('https://www.africanews.com/feed/rss'), fr: rss('https://fr.africanews.com/feed/rss') } },
+    // Nigeria
+    { name: 'Premium Times', url: rss('https://www.premiumtimesng.com/feed') },
+    { name: 'Channels TV', url: rss('https://www.channelstv.com/feed/') },
     { name: 'Africa News', url: rss('https://news.google.com/rss/search?q=(Africa+OR+Nigeria+OR+Kenya+OR+"South+Africa"+OR+Ethiopia)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Sahel Crisis', url: rss('https://news.google.com/rss/search?q=(Sahel+OR+Mali+OR+Niger+OR+"Burkina+Faso"+OR+Wagner)+when:3d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'News24', url: rss('https://feeds.news24.com/articles/news24/TopStories/rss') },
     { name: 'BBC Africa', url: rss('https://feeds.bbci.co.uk/news/world/africa/rss.xml') },
     { name: 'Jeune Afrique', url: rss('https://www.jeuneafrique.com/feed/'), lang: 'fr' },
-    { name: 'Africanews', url: { en: rss('https://www.africanews.com/feed/rss'), fr: rss('https://fr.africanews.com/feed/rss') } },
     { name: 'BBC Afrique', url: rss('https://www.bbc.com/afrique/index.xml'), lang: 'fr' },
-    // Nigeria
-    { name: 'Premium Times', url: rss('https://www.premiumtimesng.com/feed') },
     { name: 'Vanguard Nigeria', url: rss('https://www.vanguardngr.com/feed/') },
-    { name: 'Channels TV', url: rss('https://www.channelstv.com/feed/') },
     { name: 'Daily Trust', url: rss('https://dailytrust.com/feed/') },
     { name: 'ThisDay', url: rss('https://www.thisdaylive.com/feed') },
   ],
   latam: [
+    { name: 'France 24 LatAm', url: rss('https://www.france24.com/en/americas/rss') },
+    { name: 'El Tiempo', url: rss('https://www.eltiempo.com/rss/mundo_latinoamerica.xml'), lang: 'es' },
     { name: 'Latin America', url: rss('https://news.google.com/rss/search?q=(Brazil+OR+Mexico+OR+Argentina+OR+Venezuela+OR+Colombia)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'BBC Latin America', url: rss('https://feeds.bbci.co.uk/news/world/latin_america/rss.xml') },
     { name: 'Reuters LatAm', url: rss('https://news.google.com/rss/search?q=site:reuters.com+(Brazil+OR+Mexico+OR+Argentina)+when:3d&hl=en-US&gl=US&ceid=US:en') },
@@ -664,7 +672,6 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'O Globo', url: rss('https://news.google.com/rss/search?q=site:oglobo.globo.com+when:1d&hl=pt-BR&gl=BR&ceid=BR:pt-419'), lang: 'pt' },
     { name: 'Folha de S.Paulo', url: rss('https://feeds.folha.uol.com.br/emcimadahora/rss091.xml'), lang: 'pt' },
     { name: 'Brasil Paralelo', url: rss('https://www.brasilparalelo.com.br/noticias/rss.xml'), lang: 'pt' },
-    { name: 'El Tiempo', url: rss('https://www.eltiempo.com/rss/mundo_latinoamerica.xml'), lang: 'es' },
     { name: 'La Silla Vacía', url: rss('https://www.lasillavacia.com/rss') },
     { name: 'Primicias', url: rss('https://www.primicias.ec/feed/'), lang: 'es' },
     { name: 'Infobae Americas', url: rss('https://www.infobae.com/feeds/rss/'), lang: 'es' },
@@ -675,9 +682,9 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'AP Mexico', url: rss('https://news.google.com/rss/search?q=site:apnews.com+Mexico+when:3d&hl=en-US&gl=US&ceid=US:en') },
     // LatAm Security
     { name: 'InSight Crime', url: rss('https://insightcrime.org/feed/') },
-    { name: 'France 24 LatAm', url: rss('https://www.france24.com/en/americas/rss') },
   ],
   asia: [
+    { name: 'VnExpress', url: rss('https://vnexpress.net/rss/tin-moi-nhat.rss'), lang: 'vi' },
     { name: 'Asia News', url: rss('https://news.google.com/rss/search?q=(China+OR+Japan+OR+Korea+OR+India+OR+ASEAN)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'BBC Asia', url: rss('https://feeds.bbci.co.uk/news/world/asia/rss.xml') },
     { name: 'The Diplomat', url: rss('https://thediplomat.com/feed/') },
@@ -698,7 +705,6 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'Bangkok Post', url: rss('https://news.google.com/rss/search?q=site:bangkokpost.com+when:1d&hl=en-US&gl=US&ceid=US:en'), lang: 'th' },
     { name: 'Thai PBS', url: rss('https://news.google.com/rss/search?q=Thai+PBS+World+news&hl=en&gl=US&ceid=US:en'), lang: 'th' },
     // Vietnam
-    { name: 'VnExpress', url: rss('https://vnexpress.net/rss/tin-moi-nhat.rss'), lang: 'vi' },
     { name: 'Tuoi Tre News', url: rss('https://tuoitrenews.vn/rss'), lang: 'vi' },
     // Korea
     { name: 'Yonhap News', url: rss('https://www.yonhapnewstv.co.kr/browse/feed/'), lang: 'ko' },
@@ -710,6 +716,8 @@ const FULL_FEEDS: Record<string, Feed[]> = {
     { name: 'Island Times (Palau)', url: rss('https://islandtimes.org/feed/') },
   ],
   energy: [
+    { name: 'EIA Press', url: rss('https://www.eia.gov/rss/press_rss.xml') },
+    { name: 'IAEA Energy', url: rss('https://www.iaea.org/feeds/topnews') },
     { name: 'Oil & Gas', url: rss('https://news.google.com/rss/search?q=(oil+price+OR+OPEC+OR+"natural+gas"+OR+pipeline+OR+LNG)+when:2d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Nuclear Energy', url: rss('https://news.google.com/rss/search?q=("nuclear+energy"+OR+"nuclear+power"+OR+uranium+OR+IAEA)+when:3d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Reuters Energy', url: rss('https://news.google.com/rss/search?q=site:reuters.com+(oil+OR+gas+OR+energy+OR+OPEC)+when:3d&hl=en-US&gl=US&ceid=US:en') },
@@ -1157,21 +1165,21 @@ export const INTEL_SOURCES: Feed[] = [
 
 // Default-enabled sources per panel (Tier 1+2 priority, ≥8 per panel)
 export const DEFAULT_ENABLED_SOURCES: Record<string, string[]> = {
-  politics: ['BBC World', 'Guardian World', 'AP News', 'Reuters World', 'CNN World'],
+  politics: ['France 24 World', 'BBC World', 'Guardian World', 'AP News', 'Reuters World', 'CNN World'],
   us: ['Reuters US', 'NPR News', 'PBS NewsHour', 'ABC News', 'CBS News', 'NBC News', 'Wall Street Journal', 'Politico', 'The Hill'],
   europe: ['France 24', 'EuroNews', 'Le Monde', 'DW News', 'Tagesschau', 'ANSA', 'NOS Nieuws', 'SVT Nyheter'],
-  middleeast: ['BBC Middle East', 'Al Jazeera', 'Al Arabiya', 'Guardian ME', 'BBC Persian', 'Iran International', 'Haaretz', 'Asharq News', 'The National'],
-  africa: ['BBC Africa', 'News24', 'Africanews', 'Jeune Afrique', 'Africa News', 'Premium Times', 'Channels TV', 'Sahel Crisis'],
-  latam: ['BBC Latin America', 'Reuters LatAm', 'InSight Crime', 'Mexico News Daily', 'Clarín', 'Primicias', 'Infobae Americas', 'El Universo'],
-  asia: ['BBC Asia', 'The Diplomat', 'South China Morning Post', 'Reuters Asia', 'Nikkei Asia', 'CNA', 'Asia News', 'The Hindu'],
+  middleeast: ['Oman Observer', 'BBC Middle East', 'Al Jazeera', 'Guardian ME', 'The National', 'Asharq News'],
+  africa: ['Africanews', 'Premium Times', 'Channels TV', 'Africa News', 'Sahel Crisis', 'BBC Africa', 'News24'],
+  latam: ['France 24 LatAm', 'El Tiempo', 'BBC Latin America', 'Reuters LatAm', 'InSight Crime', 'Mexico News Daily', 'Primicias'],
+  asia: ['VnExpress', 'BBC Asia', 'The Diplomat', 'South China Morning Post', 'Nikkei Asia', 'Asia News', 'CNA', 'The Hindu'],
   tech: ['Hacker News', 'Ars Technica', 'The Verge', 'MIT Tech Review'],
   ai: ['AI News', 'VentureBeat AI', 'The Verge AI', 'MIT Tech Review', 'ArXiv AI'],
   finance: ['CNBC', 'MarketWatch', 'Yahoo Finance', 'Financial Times', 'Reuters Business'],
   gov: ['White House', 'State Dept', 'Pentagon', 'UN News', 'CISA', 'Treasury', 'DOJ', 'CDC'],
   layoffs: ['Layoffs.fyi', 'TechCrunch Layoffs', 'Layoffs News'],
-  thinktanks: ['Foreign Policy', 'Atlantic Council', 'Foreign Affairs', 'CSIS', 'RAND', 'Brookings', 'Carnegie', 'War on the Rocks'],
+  thinktanks: ['Stimson Center', 'Foreign Policy', 'Atlantic Council', 'Foreign Affairs', 'CSIS', 'RAND', 'Brookings', 'War on the Rocks'],
   crisis: ['CrisisWatch', 'IAEA', 'WHO', 'UNHCR'],
-  energy: ['Oil & Gas', 'Nuclear Energy', 'Reuters Energy', 'Mining & Resources'],
+  energy: ['EIA Press', 'IAEA Energy', 'Oil & Gas', 'Nuclear Energy', 'Reuters Energy', 'Mining & Resources'],
 };
 
 export const DEFAULT_ENABLED_INTEL: string[] = [

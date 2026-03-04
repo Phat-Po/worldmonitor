@@ -70,6 +70,7 @@ export interface PanelLayoutCallbacks {
   loadAllData: () => Promise<void>;
   updateMonitorResults: () => void;
   loadSecurityAdvisories?: () => Promise<void>;
+  refreshPanel: (panelKey: string) => Promise<void>;
 }
 
 export class PanelLayoutManager implements AppModule {
@@ -194,6 +195,7 @@ export class PanelLayoutManager implements AppModule {
             </button>
             <div class="download-dropdown" id="downloadDropdown"></div>
           </div>`}
+          <button class="refresh-unavailable-btn" id="refreshUnavailableBtn" title="${t('header.refreshUnavailableTitle')}">↻ ${t('header.refreshUnavailable')}</button>
           <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> ${t('header.search')}</button>
           ${this.ctx.isDesktopApp ? '' : `<button class="copy-link-btn" id="copyLinkBtn">${t('header.copyLink')}</button>`}
           <button class="theme-toggle-btn" id="headerThemeToggle" title="${t('header.toggleTheme')}">
@@ -554,6 +556,7 @@ export class PanelLayoutManager implements AppModule {
       if (this.ctx.isDesktopApp) {
         import('@/components/DeductionPanel').then(({ DeductionPanel }) => {
           const deductionPanel = new DeductionPanel(() => this.ctx.allNews);
+          deductionPanel.setRefreshHandler(() => this.callbacks.refreshPanel('deduction'));
           this.ctx.panels['deduction'] = deductionPanel;
           const el = deductionPanel.getElement();
           this.makeDraggable(el, 'deduction');
@@ -710,6 +713,8 @@ export class PanelLayoutManager implements AppModule {
       this.ctx.renewablePanel = new RenewableEnergyPanel();
       this.ctx.panels['renewable'] = this.ctx.renewablePanel;
     }
+
+    this.attachPanelRefreshHandlers();
 
     const defaultOrder = Object.keys(DEFAULT_PANELS).filter(k => k !== 'map');
     const savedOrder = this.getSavedPanelOrder();
@@ -960,6 +965,12 @@ export class PanelLayoutManager implements AppModule {
       onRelatedAssetClick: (asset) => this.handleRelatedAssetClick(asset),
       onRelatedAssetsFocus: (assets) => this.ctx.map?.highlightAssets(assets),
       onRelatedAssetsClear: () => this.ctx.map?.highlightAssets(null),
+    });
+  }
+
+  private attachPanelRefreshHandlers(): void {
+    Object.entries(this.ctx.panels).forEach(([panelKey, panel]) => {
+      panel.setRefreshHandler(() => this.callbacks.refreshPanel(panelKey));
     });
   }
 

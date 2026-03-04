@@ -83,6 +83,8 @@
     "world": "世界",
     "tech": "科技",
     "live": "实时",
+    "refreshUnavailable": "刷新异常面板",
+    "refreshUnavailableTitle": "仅刷新当前不可用面板",
     "search": "搜索",
     "settings": "设置",
     "sources": "数据源",
@@ -2173,6 +2175,8 @@
     "currentVariant": "(当前)",
     "retry": "Retry",
     "refresh": "Refresh",
+    "noUnavailablePanels": "当前没有不可用面板",
+    "refreshedPanels": "已刷新 {{count}} 个不可用面板",
     "all": "全部",
     "loadingGiving": "正在加载全球捐赠数据",
     "rateLimitedMarket": "市场数据暂时不可用（请求受限）— 即将自动重试"

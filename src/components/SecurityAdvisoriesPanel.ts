@@ -9,7 +9,7 @@ export class SecurityAdvisoriesPanel extends Panel {
   private advisories: SecurityAdvisory[] = [];
   private activeFilter: AdvisoryFilter = 'all';
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
-  private onRefreshRequest?: () => void;
+  private onRefreshRequest?: () => void | Promise<void>;
 
   constructor() {
     super({
@@ -31,7 +31,7 @@ export class SecurityAdvisoriesPanel extends Panel {
       }
       if (target.closest('.sa-refresh-btn')) {
         this.showLoading(t('components.securityAdvisories.loading'));
-        this.onRefreshRequest?.();
+        void this.onRefreshRequest?.();
       }
     });
   }
@@ -190,8 +190,9 @@ export class SecurityAdvisoriesPanel extends Panel {
     `);
   }
 
-  public setRefreshHandler(handler: () => void): void {
-    this.onRefreshRequest = handler;
+  public override setRefreshHandler(handler: (() => void | Promise<void>) | null): void {
+    super.setRefreshHandler(handler);
+    this.onRefreshRequest = handler ?? undefined;
   }
 
   public destroy(): void {

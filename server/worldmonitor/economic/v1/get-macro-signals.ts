@@ -51,16 +51,19 @@ function buildFallbackResult(): GetMacroSignalsResponse {
 async function computeMacroSignals(): Promise<GetMacroSignalsResponse> {
   const yahooBase = 'https://query1.finance.yahoo.com/v8/finance/chart';
 
-  // Yahoo calls go through global yahooGate() in fetchJSON — sequential to avoid 429
-  const jpyChart = await fetchJSON(`${yahooBase}/JPY=X?range=1y&interval=1d`).catch(() => null);
-  const btcChart = await fetchJSON(`${yahooBase}/BTC-USD?range=1y&interval=1d`).catch(() => null);
-  const qqqChart = await fetchJSON(`${yahooBase}/QQQ?range=1y&interval=1d`).catch(() => null);
-  const xlpChart = await fetchJSON(`${yahooBase}/XLP?range=1y&interval=1d`).catch(() => null);
-  // Non-Yahoo calls can go in parallel
-  const [fearGreed, mempoolHash] = await Promise.allSettled([
+  const [jpyChartResult, btcChartResult, qqqChartResult, xlpChartResult, fearGreed, mempoolHash] = await Promise.allSettled([
+    fetchJSON(`${yahooBase}/JPY=X?range=1y&interval=1d`),
+    fetchJSON(`${yahooBase}/BTC-USD?range=1y&interval=1d`),
+    fetchJSON(`${yahooBase}/QQQ?range=1y&interval=1d`),
+    fetchJSON(`${yahooBase}/XLP?range=1y&interval=1d`),
     fetchJSON('https://api.alternative.me/fng/?limit=30&format=json'),
     fetchJSON('https://mempool.space/api/v1/mining/hashrate/1m'),
   ]);
+
+  const jpyChart = jpyChartResult.status === 'fulfilled' ? jpyChartResult.value : null;
+  const btcChart = btcChartResult.status === 'fulfilled' ? btcChartResult.value : null;
+  const qqqChart = qqqChartResult.status === 'fulfilled' ? qqqChartResult.value : null;
+  const xlpChart = xlpChartResult.status === 'fulfilled' ? xlpChartResult.value : null;
 
   const jpyPrices = jpyChart ? extractClosePrices(jpyChart) : [];
   const btcPrices = btcChart ? extractClosePrices(btcChart) : [];

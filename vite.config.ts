@@ -445,7 +445,7 @@ const RSS_PROXY_ALLOWED_DOMAINS = new Set([
   'feeds.capi24.com', 'www.france24.com', 'www.euronews.com', 'www.lemonde.fr',
   'rss.dw.com', 'www.africanews.com', 'www.lasillavacia.com', 'www.channelnewsasia.com',
   'www.thehindu.com', 'news.un.org', 'www.iaea.org', 'www.who.int', 'www.cisa.gov',
-  'www.crisisgroup.org',
+  'www.crisisgroup.org', 'www.un.org', 'www.eia.gov',
   // Think tanks
   'rusi.org', 'warontherocks.com', 'www.aei.org', 'responsiblestatecraft.org',
   'www.fpri.org', 'jamestown.org', 'www.chathamhouse.org', 'ecfr.eu', 'www.gmfus.org',
@@ -465,6 +465,20 @@ const RSS_PROXY_ALLOWED_DOMAINS = new Set([
   'www.optimistdaily.com', 'www.sunnyskyz.com', 'www.huffpost.com',
   'www.sciencedaily.com', 'feeds.nature.com', 'www.livescience.com', 'www.newscientist.com',
 ]);
+
+function normalizeRssHost(hostname?: string | null): string {
+  return String(hostname || '').trim().toLowerCase();
+}
+
+function isRssHostAllowed(hostname?: string | null): boolean {
+  const normalized = normalizeRssHost(hostname);
+  if (!normalized) return false;
+  const bare = normalized.replace(/^www\./, '');
+  const withWww = normalized.startsWith('www.') ? normalized : `www.${normalized}`;
+  return RSS_PROXY_ALLOWED_DOMAINS.has(normalized)
+    || RSS_PROXY_ALLOWED_DOMAINS.has(bare)
+    || RSS_PROXY_ALLOWED_DOMAINS.has(withWww);
+}
 
 for (const domain of splitDomainList(process.env.RSS_PROXY_EXTRA_DOMAINS)) {
   RSS_PROXY_ALLOWED_DOMAINS.add(domain);
@@ -495,7 +509,7 @@ function rssProxyPlugin(): Plugin {
 
         try {
           const parsed = new URL(feedUrl);
-          if (!RSS_PROXY_ALLOWED_DOMAINS.has(parsed.hostname)) {
+          if (!isRssHostAllowed(parsed.hostname)) {
             res.statusCode = 403;
             res.setHeader('Content-Type', 'application/json');
             res.end(JSON.stringify({ error: `Domain not allowed: ${parsed.hostname}` }));

@@ -5,6 +5,10 @@ import {
   type GdeltArticle as ProtoGdeltArticle,
   type SearchGdeltDocumentsResponse,
 } from '@/generated/client/worldmonitor/intelligence/v1/service_client';
+import {
+  NewsServiceClient,
+  type ListFeedDigestResponse,
+} from '@/generated/client/worldmonitor/news/v1/service_client';
 import { createCircuitBreaker } from '@/utils';
 
 export interface GdeltArticle {
@@ -125,6 +129,7 @@ export function getIntelTopics(): IntelTopic[] {
 // ---- Sebuf client ----
 
 const client = new IntelligenceServiceClient('', { fetch: (...args) => globalThis.fetch(...args) });
+const newsClient = new NewsServiceClient('', { fetch: (...args) => globalThis.fetch(...args) });
 const gdeltBreaker = createCircuitBreaker<SearchGdeltDocumentsResponse>({ name: 'GDELT Intelligence', cacheTtlMs: 10 * 60 * 1000, persistCache: true });
 const positiveGdeltBreaker = createCircuitBreaker<SearchGdeltDocumentsResponse>({ name: 'GDELT Positive', cacheTtlMs: 10 * 60 * 1000, persistCache: true });
 
@@ -132,6 +137,19 @@ const emptyGdeltFallback: SearchGdeltDocumentsResponse = { articles: [], query: 
 
 const CACHE_TTL = 5 * 60 * 1000;
 const articleCache = new Map<string, { articles: GdeltArticle[]; timestamp: number }>();
+const digestFallbackCache = new Map<string, { data: ListFeedDigestResponse; timestamp: number }>();
+const DIGEST_CACHE_TTL = 60_000;
+const DIGEST_FALLBACK_VARIANT = 'full';
+const DIGEST_FALLBACK_LANG = 'en';
+
+const TOPIC_FALLBACK_CATEGORIES: Record<string, string[]> = {
+  military: ['middleeast', 'politics', 'gov'],
+  cyber: ['gov', 'tech', 'politics'],
+  nuclear: ['energy', 'crisis', 'gov'],
+  sanctions: ['gov', 'politics', 'finance'],
+  intelligence: ['thinktanks', 'gov', 'politics'],
+  maritime: ['middleeast', 'energy', 'politics'],
+};
 
 /** Map proto GdeltArticle (all required strings) to service GdeltArticle (optional fields) */
 function toGdeltArticle(a: ProtoGdeltArticle): GdeltArticle {
@@ -144,6 +162,62 @@ function toGdeltArticle(a: ProtoGdeltArticle): GdeltArticle {
     language: a.language || undefined,
     tone: a.tone || undefined,
   };
+}
+
+function epochToCompactDate(epochMs: number): string {
+  const d = new Date(epochMs);
+  const yyyy = String(d.getUTCFullYear());
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  const ss = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}T${hh}${mi}${ss}Z`;
+}
+
+async function fetchDigestFallback(variant = DIGEST_FALLBACK_VARIANT, lang = DIGEST_FALLBACK_LANG): Promise<ListFeedDigestResponse | null> {
+  const key = `${variant}:${lang}`;
+  const cached = digestFallbackCache.get(key);
+  if (cached && Date.now() - cached.timestamp < DIGEST_CACHE_TTL) {
+    return cached.data;
+  }
+
+  try {
+    const data = await newsClient.listFeedDigest({ variant, lang }, { signal: AbortSignal.timeout(25_000) });
+    digestFallbackCache.set(key, { data, timestamp: Date.now() });
+    return data;
+  } catch {
+    return cached?.data || null;
+  }
+}
+
+async function fetchTopicDigestFallback(topic: IntelTopic, maxrecords = 10): Promise<GdeltArticle[]> {
+  const digest = await fetchDigestFallback();
+  if (!digest?.categories) return [];
+
+  const preferred = TOPIC_FALLBACK_CATEGORIES[topic.id] || ['politics', 'gov', 'middleeast'];
+  const categories = [...preferred, 'politics', 'gov', 'middleeast', 'finance'];
+  const seen = new Set<string>();
+  const out: GdeltArticle[] = [];
+
+  for (const category of categories) {
+    const items = digest.categories[category]?.items || [];
+    for (const item of items) {
+      if (!item?.title || !item?.link) continue;
+      const dedupeKey = `${item.link}::${item.title}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push({
+        title: item.title,
+        url: item.link,
+        source: item.source || extractDomain(item.link),
+        date: epochToCompactDate(item.publishedAt || Date.now()),
+      });
+      if (out.length >= maxrecords) return out;
+    }
+  }
+
+  return out;
 }
 
 export async function fetchGdeltArticles(
@@ -185,7 +259,10 @@ export async function fetchHotspotContext(hotspot: Hotspot): Promise<GdeltArticl
 }
 
 export async function fetchTopicIntelligence(topic: IntelTopic): Promise<TopicIntelligence> {
-  const articles = await fetchGdeltArticles(topic.query, 10, '24h');
+  let articles = await fetchGdeltArticles(topic.query, 10, '24h');
+  if (articles.length === 0) {
+    articles = await fetchTopicDigestFallback(topic, 10);
+  }
   return {
     topic,
     articles,

@@ -18,6 +18,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
     politics: [
       { name: 'BBC World', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
       { name: 'Guardian World', url: 'https://www.theguardian.com/world/rss' },
+      { name: 'France 24 World', url: 'https://www.france24.com/en/rss' },
       { name: 'AP News', url: apNewsFeed() },
       { name: 'Reuters World', url: gn('site:reuters.com world') },
       { name: 'CNN World', url: gn('site:cnn.com world news when:1d') },
@@ -76,10 +77,15 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'CISA', url: 'https://www.cisa.gov/cybersecurity-advisories/all.xml' },
     ],
     africa: [
+      { name: 'Africanews', url: 'https://www.africanews.com/feed/rss' },
+      { name: 'Premium Times', url: 'https://www.premiumtimesng.com/feed' },
+      { name: 'Channels TV', url: 'https://www.channelstv.com/feed/' },
       { name: 'BBC Africa', url: 'https://feeds.bbci.co.uk/news/world/africa/rss.xml' },
       { name: 'News24', url: 'https://feeds.news24.com/articles/news24/TopStories/rss' },
     ],
     latam: [
+      { name: 'France 24 LatAm', url: 'https://www.france24.com/en/americas/rss' },
+      { name: 'El Tiempo', url: 'https://www.eltiempo.com/rss/mundo_latinoamerica.xml', lang: 'es' },
       { name: 'BBC Latin America', url: 'https://feeds.bbci.co.uk/news/world/latin_america/rss.xml' },
       { name: 'Guardian Americas', url: 'https://www.theguardian.com/world/americas/rss' },
       { name: 'Primicias', url: 'https://www.primicias.ec/feed/', lang: 'es' },
@@ -87,6 +93,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'El Universo', url: 'https://www.eluniverso.com/arc/outboundfeeds/rss/category/noticias/?outputType=xml', lang: 'es' },
     ],
     asia: [
+      { name: 'VnExpress', url: 'https://vnexpress.net/rss/tin-moi-nhat.rss', lang: 'vi' },
       { name: 'BBC Asia', url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml' },
       { name: 'The Diplomat', url: 'https://thediplomat.com/feed/' },
       { name: 'Nikkei Asia', url: gn('site:asia.nikkei.com when:3d') },
@@ -94,9 +101,12 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'NDTV', url: 'https://feeds.feedburner.com/ndtvnews-top-stories' },
     ],
     energy: [
+      { name: 'EIA Press', url: 'https://www.eia.gov/rss/press_rss.xml' },
+      { name: 'IAEA Energy', url: 'https://www.iaea.org/feeds/topnews' },
       { name: 'Oil & Gas', url: gn('(oil price OR OPEC OR "natural gas" OR pipeline OR LNG) when:2d') },
     ],
     thinktanks: [
+      { name: 'Stimson Center', url: 'https://www.stimson.org/feed/' },
       { name: 'Foreign Policy', url: 'https://foreignpolicy.com/feed/' },
       { name: 'Atlantic Council', url: 'https://www.atlanticcouncil.org/feed/' },
       { name: 'Foreign Affairs', url: 'https://www.foreignaffairs.com/rss.xml' },

@@ -21,6 +21,7 @@ const REDIS_CACHE_KEY = 'wildfire:fires:v1';
 const REDIS_CACHE_TTL = 3600; // 1h — NASA FIRMS VIIRS NRT updates every ~3 hours
 
 const FIRMS_SOURCE = 'VIIRS_SNPP_NRT';
+const EONET_FALLBACK_URL = 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires&limit=120';
 
 /** Bounding boxes as west,south,east,north */
 const MONITORED_REGIONS: Record<string, string> = {
@@ -34,6 +35,65 @@ const MONITORED_REGIONS: Record<string, string> = {
   'Saudi Arabia': '34,16,56,32',
   'Turkey': '26,36,45,42',
 };
+
+interface RegionBounds {
+  west: number;
+  south: number;
+  east: number;
+  north: number;
+}
+
+const REGION_BOUNDS: Record<string, RegionBounds> = Object.fromEntries(
+  Object.entries(MONITORED_REGIONS).map(([name, bbox]) => {
+    const [west, south, east, north] = bbox.split(',').map((v) => Number(v));
+    return [name, { west, south, east, north }];
+  }),
+) as Record<string, RegionBounds>;
+
+interface EonetEvent {
+  id?: string;
+  title?: string;
+  geometry?: Array<{
+    date?: string;
+    type?: string;
+    coordinates?: unknown;
+    magnitudeValue?: number;
+  }>;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function findLonLatPair(value: unknown): [number, number] | null {
+  if (!value) return null;
+  if (Array.isArray(value)) {
+    if (
+      value.length >= 2 &&
+      isFiniteNumber(value[0]) &&
+      isFiniteNumber(value[1])
+    ) {
+      return [Number(value[0]), Number(value[1])];
+    }
+    for (const entry of value) {
+      const pair = findLonLatPair(entry);
+      if (pair) return pair;
+    }
+  }
+  return null;
+}
+
+function inferRegion(lat: number, lon: number): string {
+  for (const [name, bounds] of Object.entries(REGION_BOUNDS)) {
+    if (
+      lon >= bounds.west && lon <= bounds.east &&
+      lat >= bounds.south && lat <= bounds.north
+    ) {
+      return name;
+    }
+  }
+  return 'Global';
+}
 
 /** Map VIIRS confidence letters to proto enum values. */
 function mapConfidence(c: string): FireConfidence {
@@ -82,6 +142,53 @@ function parseDetectedAt(acqDate: string, acqTime: string): number {
   return new Date(`${acqDate}T${hours}:${minutes}:00Z`).getTime();
 }
 
+async function fetchEonetFallbackDetections(): Promise<ListFireDetectionsResponse['fireDetections']> {
+  try {
+    const response = await fetch(EONET_FALLBACK_URL, {
+      headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return [];
+
+    const data = await response.json() as { events?: EonetEvent[] };
+    const events = Array.isArray(data.events) ? data.events : [];
+    const fireDetections: ListFireDetectionsResponse['fireDetections'] = [];
+
+    for (const event of events) {
+      const geometry = Array.isArray(event.geometry) ? event.geometry : [];
+      const latestGeometryWithCoords = geometry
+        .slice()
+        .reverse()
+        .map((g) => ({ g, pair: findLonLatPair(g?.coordinates) }))
+        .find((entry) => !!entry.pair);
+
+      if (!latestGeometryWithCoords?.pair) continue;
+      const [lon, lat] = latestGeometryWithCoords.pair;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+      const detectedAt = Number.isFinite(Date.parse(String(latestGeometryWithCoords.g?.date || '')))
+        ? Date.parse(String(latestGeometryWithCoords.g?.date))
+        : Date.now();
+
+      fireDetections.push({
+        id: event.id || `eonet-${lat}-${lon}-${detectedAt}`,
+        location: { latitude: lat, longitude: lon },
+        brightness: 0,
+        frp: Number(latestGeometryWithCoords.g?.magnitudeValue || 0),
+        confidence: 'FIRE_CONFIDENCE_NOMINAL',
+        satellite: 'EONET',
+        detectedAt,
+        region: inferRegion(lat, lon),
+        dayNight: '',
+      });
+    }
+
+    return fireDetections;
+  } catch {
+    return [];
+  }
+}
+
 export const listFireDetections: WildfireServiceHandler['listFireDetections'] = async (
   _ctx: ServerContext,
   _req: ListFireDetectionsRequest,
@@ -90,7 +197,8 @@ export const listFireDetections: WildfireServiceHandler['listFireDetections'] = 
     process.env.NASA_FIRMS_API_KEY || process.env.FIRMS_API_KEY || '';
 
   if (!apiKey) {
-    return { fireDetections: [], pagination: undefined };
+    const fallbackDetections = await fetchEonetFallbackDetections();
+    return { fireDetections: fallbackDetections, pagination: undefined };
   }
 
   let result: ListFireDetectionsResponse | null = null;
@@ -143,11 +251,16 @@ export const listFireDetections: WildfireServiceHandler['listFireDetections'] = 
           }
         }
 
-        return fireDetections.length > 0 ? { fireDetections, pagination: undefined } : null;
+        if (fireDetections.length > 0) return { fireDetections, pagination: undefined };
+        const fallbackDetections = await fetchEonetFallbackDetections();
+        return fallbackDetections.length > 0 ? { fireDetections: fallbackDetections, pagination: undefined } : null;
       },
     );
   } catch {
-    return { fireDetections: [], pagination: undefined };
+    const fallbackDetections = await fetchEonetFallbackDetections();
+    return { fireDetections: fallbackDetections, pagination: undefined };
   }
-  return result || { fireDetections: [], pagination: undefined };
+  if (result) return result;
+  const fallbackDetections = await fetchEonetFallbackDetections();
+  return { fireDetections: fallbackDetections, pagination: undefined };
 };

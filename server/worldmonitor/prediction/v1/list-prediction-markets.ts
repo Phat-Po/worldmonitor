@@ -22,6 +22,7 @@ const REDIS_CACHE_KEY = 'prediction:markets:v1';
 const REDIS_CACHE_TTL = 600; // 10 min
 
 const GAMMA_BASE = 'https://gamma-api.polymarket.com';
+const MANIFOLD_BASE = 'https://api.manifold.markets/v0';
 const FETCH_TIMEOUT = 8000;
 
 // ---------- Internal Gamma API types ----------
@@ -45,6 +46,19 @@ interface GammaEvent {
   markets?: GammaMarket[];
   closed?: boolean;
   endDate?: string;
+}
+
+interface ManifoldMarket {
+  id?: string;
+  question?: string;
+  probability?: number;
+  p?: number;
+  volume?: number;
+  closeTime?: number;
+  url?: string;
+  slug?: string;
+  outcomeType?: string;
+  isResolved?: boolean;
 }
 
 // ---------- Helpers ----------
@@ -97,6 +111,58 @@ function mapMarket(market: GammaMarket): PredictionMarket {
   };
 }
 
+function mapManifoldMarket(market: ManifoldMarket, category: string): PredictionMarket | null {
+  const title = String(market.question || '').trim();
+  if (!title) return null;
+
+  const rawProbability = typeof market.probability === 'number'
+    ? market.probability
+    : (typeof market.p === 'number' ? market.p : 0.5);
+  const yesPrice = Number.isFinite(rawProbability) ? Math.max(0, Math.min(1, rawProbability)) : 0.5;
+  const volume = Number.isFinite(market.volume) ? Number(market.volume) : 0;
+  const closesAt = Number.isFinite(market.closeTime) ? Number(market.closeTime) : 0;
+
+  return {
+    id: String(market.id || market.slug || title),
+    title,
+    yesPrice,
+    volume,
+    url: String(market.url || (market.slug ? `https://manifold.markets/market/${market.slug}` : 'https://manifold.markets')),
+    closesAt,
+    category: category || 'manifold',
+  };
+}
+
+async function fetchFromManifold(
+  req: ListPredictionMarketsRequest,
+  limit: number,
+): Promise<PredictionMarket[]> {
+  const term = (req.query || req.category || '').trim();
+  const endpoint = term
+    ? `${MANIFOLD_BASE}/search-markets?term=${encodeURIComponent(term)}&limit=${limit}`
+    : `${MANIFOLD_BASE}/markets?limit=${limit}`;
+
+  const response = await fetch(endpoint, {
+    headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT),
+  });
+  if (!response.ok) return [];
+
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) return [];
+
+  let markets = (data as ManifoldMarket[])
+    .filter((m) => m?.outcomeType === 'BINARY' && !m?.isResolved)
+    .map((m) => mapManifoldMarket(m, req.category))
+    .filter((m): m is PredictionMarket => !!m);
+
+  if (req.query) {
+    const q = req.query.toLowerCase();
+    markets = markets.filter((m) => m.title.toLowerCase().includes(q));
+  }
+  return markets.slice(0, limit);
+}
+
 // ---------- RPC ----------
 
 export const listPredictionMarkets: PredictionServiceHandler['listPredictionMarkets'] = async (
@@ -125,21 +191,30 @@ export const listPredictionMarkets: PredictionServiceHandler['listPredictionMark
           params.set('tag_slug', req.category);
         }
 
-        const response = await fetch(
-          `${GAMMA_BASE}/${endpoint}?${params}`,
-          {
-            headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
-            signal: AbortSignal.timeout(FETCH_TIMEOUT),
-          },
-        );
-        if (!response.ok) return null;
+        let markets: PredictionMarket[] = [];
+        try {
+          const response = await fetch(
+            `${GAMMA_BASE}/${endpoint}?${params}`,
+            {
+              headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+              signal: AbortSignal.timeout(FETCH_TIMEOUT),
+            },
+          );
+          if (response.ok) {
+            const data: unknown = await response.json();
+            markets = useEvents
+              ? (data as GammaEvent[]).map((e) => mapEvent(e, req.category))
+              : (data as GammaMarket[]).map(mapMarket);
+          }
+        } catch {
+          // fall through to manifold fallback
+        }
 
-        const data: unknown = await response.json();
-        let markets: PredictionMarket[];
-        if (useEvents) {
-          markets = (data as GammaEvent[]).map((e) => mapEvent(e, req.category));
-        } else {
-          markets = (data as GammaMarket[]).map(mapMarket);
+        if (markets.length === 0) {
+          const manifoldMarkets = await fetchFromManifold(req, limit);
+          if (manifoldMarkets.length > 0) {
+            return { markets: manifoldMarkets, pagination: undefined };
+          }
         }
 
         if (req.query) {

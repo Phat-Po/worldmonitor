@@ -37,22 +37,80 @@ let etfCache: ListEtfFlowsResponse | null = null;
 let etfCacheTimestamp = 0;
 const ETF_CACHE_TTL = 900_000; // 15 minutes (in-memory fallback)
 
+function shouldPreferStooqInLocalDev(): boolean {
+  const env = String(process.env.VERCEL_ENV || process.env.NODE_ENV || '').toLowerCase();
+  return !process.env.WS_RELAY_URL && (env === 'development' || env === 'dev' || env === '' || env === 'local');
+}
+
 // ========================================================================
 // Helpers
 // ========================================================================
 
 async function fetchEtfChart(ticker: string): Promise<YahooChartResponse | null> {
+  if (!shouldPreferStooqInLocalDev()) {
+    try {
+      await yahooGate();
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': CHROME_UA,
+        },
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      if (resp.ok) {
+        return (await resp.json()) as YahooChartResponse;
+      }
+    } catch {
+      // fall through to Stooq
+    }
+  }
+
+  // Fallback for regions where Yahoo blocks/ratelimits: Stooq daily CSV.
   try {
-    await yahooGate();
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
+    const stooqSymbol = `${ticker.toLowerCase()}.us`;
+    const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(stooqSymbol)}&i=d`;
     const resp = await fetch(url, {
-      headers: {
-        'User-Agent': CHROME_UA,
-      },
+      headers: { 'User-Agent': CHROME_UA, Accept: 'text/csv' },
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
     if (!resp.ok) return null;
-    return (await resp.json()) as YahooChartResponse;
+    const csv = (await resp.text()).trim();
+    const rows = csv.split('\n').slice(1).filter(Boolean);
+    if (rows.length < 2) return null;
+
+    const closes: number[] = [];
+    const volumes: number[] = [];
+    for (const row of rows) {
+      const cols = row.split(',');
+      if (cols.length < 6) continue;
+      const close = Number(cols[4]);
+      const volume = Number(cols[5]);
+      if (Number.isFinite(close)) closes.push(close);
+      if (Number.isFinite(volume)) volumes.push(volume);
+    }
+    if (closes.length < 2) return null;
+
+    const tailCloses = closes.slice(-5);
+    const tailVolumes = volumes.slice(-5);
+    const latest = tailCloses[tailCloses.length - 1]!;
+    const prev = tailCloses[tailCloses.length - 2] ?? latest;
+
+    return {
+      chart: {
+        result: [{
+          meta: {
+            regularMarketPrice: latest,
+            previousClose: prev,
+          },
+          indicators: {
+            quote: [{
+              close: tailCloses,
+              volume: tailVolumes,
+            }],
+          },
+        }],
+      },
+    };
   } catch {
     return null;
   }
@@ -116,18 +174,19 @@ export async function listEtfFlows(
 
   try {
   const result = await cachedFetchJson<ListEtfFlowsResponse>(REDIS_CACHE_KEY, REDIS_CACHE_TTL, async () => {
-    const etfs: EtfFlow[] = [];
-    let misses = 0;
-    for (const etf of ETF_LIST) {
-      const chart = await fetchEtfChart(etf.ticker);
-      if (chart) {
-        const parsed = parseEtfChartData(chart, etf.ticker, etf.issuer);
-        if (parsed) etfs.push(parsed); else misses++;
-      } else {
-        misses++;
-      }
-      if (misses >= 3 && etfs.length === 0) break;
-    }
+    const settled = await Promise.allSettled(
+      ETF_LIST.map(async (etf) => {
+        const chart = await fetchEtfChart(etf.ticker);
+        if (!chart) return null;
+        return parseEtfChartData(chart, etf.ticker, etf.issuer);
+      }),
+    );
+
+    const etfs: EtfFlow[] = settled
+      .filter((r): r is PromiseFulfilledResult<EtfFlow | null> => r.status === 'fulfilled')
+      .map((r) => r.value)
+      .filter((r): r is EtfFlow => !!r);
+    const misses = ETF_LIST.length - etfs.length;
 
     // If Yahoo rate-limited all calls, return null — outer handler serves stale
     if (etfs.length === 0 && etfCache) {

@@ -167,6 +167,10 @@ export class Panel {
   protected statusBadgeEl: HTMLElement | null = null;
   protected newBadgeEl: HTMLElement | null = null;
   protected panelId: string;
+  private refreshButtonEl: HTMLButtonElement | null = null;
+  private refreshHandler: (() => void | Promise<void>) | null = null;
+  private refreshClickHandler: ((event: MouseEvent) => void) | null = null;
+  private isRefreshInProgress = false;
   private abortController: AbortController = new AbortController();
   private tooltipCloseHandler: (() => void) | null = null;
   private resizeHandle: HTMLElement | null = null;
@@ -247,6 +251,21 @@ export class Panel {
     this.statusBadgeEl.className = 'panel-data-badge';
     this.statusBadgeEl.style.display = 'none';
     this.header.appendChild(this.statusBadgeEl);
+
+    this.refreshButtonEl = document.createElement('button');
+    this.refreshButtonEl.type = 'button';
+    this.refreshButtonEl.className = 'panel-refresh-btn';
+    this.refreshButtonEl.title = t('common.refresh');
+    this.refreshButtonEl.setAttribute('aria-label', t('common.refresh'));
+    this.refreshButtonEl.textContent = '↻';
+    this.refreshButtonEl.style.display = 'none';
+    this.refreshClickHandler = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.triggerRefresh();
+    };
+    this.refreshButtonEl.addEventListener('click', this.refreshClickHandler);
+    this.header.appendChild(this.refreshButtonEl);
 
     if (options.showCount) {
       this.countEl = document.createElement('span');
@@ -614,6 +633,40 @@ export class Panel {
     if (!this.statusBadgeEl) return;
     this.statusBadgeEl.style.display = 'none';
   }
+
+  private setRefreshButtonState(isLoading: boolean): void {
+    if (!this.refreshButtonEl) return;
+    this.refreshButtonEl.disabled = isLoading;
+    this.refreshButtonEl.classList.toggle('loading', isLoading);
+    this.refreshButtonEl.textContent = isLoading ? '...' : '↻';
+  }
+
+  private async triggerRefresh(): Promise<void> {
+    if (!this.refreshHandler || this.isRefreshInProgress) return;
+    this.isRefreshInProgress = true;
+    this.setRefreshButtonState(true);
+    try {
+      await this.refreshHandler();
+    } catch (error) {
+      console.warn(`[Panel:${this.panelId}] Refresh failed`, error);
+    } finally {
+      this.isRefreshInProgress = false;
+      this.setRefreshButtonState(false);
+    }
+  }
+
+  public setRefreshHandler(handler: (() => void | Promise<void>) | null): void {
+    this.refreshHandler = handler;
+    if (!this.refreshButtonEl) return;
+    if (!handler) {
+      this.refreshButtonEl.style.display = 'none';
+      this.setRefreshButtonState(false);
+      return;
+    }
+    this.refreshButtonEl.style.display = 'inline-flex';
+    this.setRefreshButtonState(this.isRefreshInProgress);
+  }
+
   public getElement(): HTMLElement {
     return this.element;
   }
@@ -802,6 +855,13 @@ export class Panel {
       document.removeEventListener('click', this.tooltipCloseHandler);
       this.tooltipCloseHandler = null;
     }
+    if (this.refreshButtonEl && this.refreshClickHandler) {
+      this.refreshButtonEl.removeEventListener('click', this.refreshClickHandler);
+    }
+    this.refreshClickHandler = null;
+    this.refreshHandler = null;
+    this.refreshButtonEl = null;
+    this.isRefreshInProgress = false;
     this.removeRowTouchDocumentListeners();
     if (this.onTouchMove) {
       this.onTouchMove = null;

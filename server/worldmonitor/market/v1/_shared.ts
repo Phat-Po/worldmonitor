@@ -25,11 +25,55 @@ function getRelayHeaders(): Record<string, string> {
   return headers;
 }
 
+function isNoRelayLocalMode(): boolean {
+  const env = String(process.env.VERCEL_ENV || process.env.NODE_ENV || '').toLowerCase();
+  return !getRelayBaseUrl() && (env === 'development' || env === 'dev' || env === '' || env === 'local');
+}
+
 // ========================================================================
 // Constants
 // ========================================================================
 
 export const UPSTREAM_TIMEOUT_MS = 10_000;
+const STOOQ_TIMEOUT_MS = 8_000;
+
+const STOOQ_SYMBOL_MAP: Record<string, string> = {
+  '^GSPC': '^spx',
+  '^DJI': '^dji',
+  '^IXIC': '^ndq',
+  '^VIX': '^vix',
+  'GC=F': 'gc.f',
+  'CL=F': 'cl.f',
+  'NG=F': 'ng.f',
+  'SI=F': 'si.f',
+  'HG=F': 'hg.f',
+  'BZ=F': 'brent.f',
+  '^TASI.SR': '^tasi',
+  'DFMGI.AE': 'dfm.ae',
+  '^MSM': '^msm',
+  'UAE': 'uae.us',
+  'QAT': 'qat.us',
+  'GULF': 'gulf.us',
+  'IBIT': 'ibit.us',
+  'FBTC': 'fbtc.us',
+  'ARKB': 'arkb.us',
+  'BITB': 'bitb.us',
+  'GBTC': 'gbtc.us',
+  'HODL': 'hodl.us',
+  'BRRR': 'brrr.us',
+  'EZBC': 'ezbc.us',
+  'BTCO': 'btco.us',
+  'BTCW': 'btcw.us',
+  'QQQ': 'qqq.us',
+  'XLP': 'xlp.us',
+  'XLK': 'xlk.us',
+  'XLF': 'xlf.us',
+  'XLE': 'xle.us',
+  'XLV': 'xlv.us',
+  'XLY': 'xly.us',
+  'BTC-USD': 'btcusd',
+  'JPY=X': 'jpyusd',
+};
 
 /**
  * Defensive parser for repeated-string query params.
@@ -47,20 +91,25 @@ export async function fetchYahooQuotesBatch(
   symbols: string[],
 ): Promise<{ results: Map<string, { price: number; change: number; sparkline: number[] }>; rateLimited: boolean }> {
   const results = new Map<string, { price: number; change: number; sparkline: number[] }>();
-  let rateLimitHits = 0;
-  let consecutiveFails = 0;
-  for (let i = 0; i < symbols.length; i++) {
-    const q = await fetchYahooQuote(symbols[i]!);
-    if (q) {
-      results.set(symbols[i]!, q);
-      consecutiveFails = 0;
-    } else {
-      rateLimitHits++;
-      consecutiveFails++;
+  if (!symbols.length) return { results, rateLimited: false };
+
+  let misses = 0;
+  const concurrency = Math.max(2, Math.min(6, symbols.length));
+  let cursor = 0;
+
+  const workers = Array.from({ length: concurrency }, async () => {
+    for (;;) {
+      const idx = cursor++;
+      if (idx >= symbols.length) break;
+      const symbol = symbols[idx]!;
+      const q = await fetchYahooQuote(symbol);
+      if (q) results.set(symbol, q);
+      else misses++;
     }
-    if (consecutiveFails >= 5) break;
-  }
-  return { results, rateLimited: rateLimitHits > symbols.length / 2 };
+  });
+
+  await Promise.all(workers);
+  return { results, rateLimited: misses > symbols.length / 2 };
 }
 
 // Yahoo-only symbols: indices and futures not on Finnhub free tier
@@ -90,7 +139,7 @@ export interface YahooChartResponse {
         previousClose?: number;
       };
       indicators?: {
-        quote?: Array<{ close?: (number | null)[] }>;
+        quote?: Array<{ close?: (number | null)[]; volume?: (number | null)[] }>;
       };
     }>;
   };
@@ -101,6 +150,14 @@ export interface CoinGeckoMarketItem {
   current_price: number;
   price_change_percentage_24h: number;
   sparkline_in_7d?: { price: number[] };
+}
+
+export interface CryptoCompareQuote {
+  PRICE?: number;
+  CHANGEPCT24HOUR?: number;
+  TOTALVOLUME24HTO?: number;
+  VOLUME24HOURTO?: number;
+  MKTCAP?: number;
 }
 
 // ========================================================================
@@ -182,9 +239,76 @@ function parseYahooChartResponse(data: YahooChartResponse): { price: number; cha
   return { price, change, sparkline };
 }
 
+function parseCsvNumber(raw?: string): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === 'N/D') return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toStooqSymbol(symbol: string): string | null {
+  const mapped = STOOQ_SYMBOL_MAP[symbol];
+  if (mapped) return mapped;
+
+  const forexMatch = symbol.match(/^([A-Z]{3})([A-Z]{3})=X$/);
+  if (forexMatch) {
+    return `${forexMatch[1]!.toLowerCase()}${forexMatch[2]!.toLowerCase()}`;
+  }
+
+  if (/^[A-Z]{1,6}$/.test(symbol)) {
+    return `${symbol.toLowerCase()}.us`;
+  }
+
+  return null;
+}
+
+export async function fetchStooqQuote(
+  symbol: string,
+): Promise<{ price: number; change: number; sparkline: number[] } | null> {
+  const stooqSymbol = toStooqSymbol(symbol);
+  if (!stooqSymbol) return null;
+
+  try {
+    const quoteUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqSymbol)}&f=sd2t2ohlcv&h&e=csv`;
+    const resp = await fetch(quoteUrl, {
+      headers: { 'User-Agent': CHROME_UA, Accept: 'text/csv' },
+      signal: AbortSignal.timeout(STOOQ_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      console.warn(`[Stooq] ${symbol} HTTP ${resp.status}`);
+      return null;
+    }
+
+    const csv = (await resp.text()).trim();
+    const rows = csv.split('\n').filter(Boolean);
+    if (rows.length < 2) return null;
+
+    const cols = rows[1]!.split(',');
+    if (cols.length < 7) return null;
+
+    const open = parseCsvNumber(cols[3]);
+    const close = parseCsvNumber(cols[6]);
+    if (close == null) return null;
+
+    const change = open && open > 0 ? ((close - open) / open) * 100 : 0;
+    return { price: close, change, sparkline: [] };
+  } catch (err) {
+    console.warn(`[Stooq] ${symbol} error:`, (err as Error).message);
+    return null;
+  }
+}
+
 export async function fetchYahooQuote(
   symbol: string,
 ): Promise<{ price: number; change: number; sparkline: number[] } | null> {
+  // Local dev without relay: Yahoo often 403s from CN paths.
+  // Go directly to Stooq first to avoid repeated Yahoo gate delays.
+  if (isNoRelayLocalMode()) {
+    const stooqFirst = await fetchStooqQuote(symbol);
+    if (stooqFirst) return stooqFirst;
+  }
+
   // Try direct Yahoo first
   try {
     await yahooGate();
@@ -206,26 +330,32 @@ export async function fetchYahooQuote(
 
   // Fallback: Railway relay (different IP, not rate-limited by Yahoo)
   const relayBase = getRelayBaseUrl();
-  if (!relayBase) {
-    console.warn(`[Yahoo] ${symbol} relay skipped: WS_RELAY_URL not set`);
-    return null;
-  }
-  try {
-    const relayUrl = `${relayBase}/yahoo-chart?symbol=${encodeURIComponent(symbol)}`;
-    const resp = await fetch(relayUrl, {
-      headers: getRelayHeaders(),
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
-    if (!resp.ok) {
-      console.warn(`[Yahoo] ${symbol} relay HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
-      return null;
+  if (relayBase) {
+    try {
+      const relayUrl = `${relayBase}/yahoo-chart?symbol=${encodeURIComponent(symbol)}`;
+      const resp = await fetch(relayUrl, {
+        headers: getRelayHeaders(),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      });
+      if (!resp.ok) {
+        console.warn(`[Yahoo] ${symbol} relay HTTP ${resp.status}: ${await resp.text().catch(() => '')}`);
+      } else {
+        const data: YahooChartResponse = await resp.json();
+        const parsed = parseYahooChartResponse(data);
+        if (parsed) return parsed;
+      }
+    } catch (err) {
+      console.warn(`[Yahoo] ${symbol} relay error:`, (err as Error).message);
     }
-    const data: YahooChartResponse = await resp.json();
-    return parseYahooChartResponse(data);
-  } catch (err) {
-    console.warn(`[Yahoo] ${symbol} relay error:`, (err as Error).message);
-    return null;
+  } else {
+    console.warn(`[Yahoo] ${symbol} relay skipped: WS_RELAY_URL not set`);
   }
+
+  // Final fallback: Stooq public quotes (works in many Yahoo-blocked regions)
+  const stooq = await fetchStooqQuote(symbol);
+  if (stooq) return stooq;
+
+  return null;
 }
 
 // ========================================================================
@@ -250,4 +380,30 @@ export async function fetchCoinGeckoMarkets(
     throw new Error(`CoinGecko returned non-array: ${JSON.stringify(data).slice(0, 200)}`);
   }
   return data;
+}
+
+export async function fetchCryptoCompareQuotes(
+  symbols: string[],
+): Promise<Record<string, CryptoCompareQuote>> {
+  const normalized = [...new Set(symbols.map((s) => String(s || '').trim().toUpperCase()).filter(Boolean))];
+  if (!normalized.length) return {};
+
+  const url = `https://min-api.cryptocompare.com/data/pricemultifull?fsyms=${encodeURIComponent(normalized.join(','))}&tsyms=USD`;
+  const resp = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': CHROME_UA },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`CryptoCompare HTTP ${resp.status}: ${body.slice(0, 200)}`);
+  }
+
+  const payload = await resp.json() as { RAW?: Record<string, { USD?: CryptoCompareQuote }> };
+  const raw = payload?.RAW || {};
+  const out: Record<string, CryptoCompareQuote> = {};
+  for (const sym of normalized) {
+    const quote = raw[sym]?.USD;
+    if (quote && typeof quote === 'object') out[sym] = quote;
+  }
+  return out;
 }

@@ -54,7 +54,7 @@ export async function fetchAllFires(_days?: number): Promise<FetchResult> {
   const detections = response.fireDetections;
 
   if (detections.length === 0) {
-    return { regions: {}, totalCount: 0, skipped: true, reason: 'NASA_FIRMS_API_KEY not configured' };
+    return { regions: {}, totalCount: 0, skipped: false, reason: 'No active fire detections' };
   }
 
   const regions: Record<string, FireDetection[]> = {};
