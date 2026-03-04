@@ -158,6 +158,29 @@ function protoItemToNewsItem(p: ProtoNewsItem): NewsItem {
 
 const CYBER_LAYER_ENABLED = import.meta.env.VITE_ENABLE_CYBER_LAYER === 'true';
 
+type FeedHealthStatus = 'ok' | 'empty' | 'timeout' | 'failed';
+
+interface FeedStatusDetail {
+  status: FeedHealthStatus;
+  reason: string;
+  statusCode?: number;
+  errorType?: string;
+  message?: string;
+  fetchedVia?: 'direct' | 'relay' | 'none';
+  url?: string;
+  category?: string;
+  updatedAt?: string;
+}
+
+type ListFeedDigestWithDetails = ListFeedDigestResponse & {
+  feedStatusDetails?: Record<string, FeedStatusDetail>;
+};
+
+interface CategoryDigestIssueSummary {
+  reasonSummary: string;
+  message: string;
+}
+
 export interface DataLoaderCallbacks {
   renderCriticalBanner: (postures: TheaterPostureSummary[]) => void;
   refreshOpenCountryBrief: () => void;
@@ -182,7 +205,7 @@ export class DataLoaderManager implements AppModule {
   private readonly perFeedFallbackCategoryFeedLimit = 3;
   private readonly perFeedFallbackIntelFeedLimit = 6;
   private readonly perFeedFallbackBatchSize = 2;
-  private lastGoodDigest: ListFeedDigestResponse | null = null;
+  private lastGoodDigest: ListFeedDigestWithDetails | null = null;
 
   constructor(ctx: AppContext, callbacks: DataLoaderCallbacks) {
     this.ctx = ctx;
@@ -204,7 +227,7 @@ export class DataLoaderManager implements AppModule {
     this.ctx.map?.setLayerReady('ciiChoropleth', scores.length > 0);
   }
 
-  private async tryFetchDigest(): Promise<ListFeedDigestResponse | null> {
+  private async tryFetchDigest(): Promise<ListFeedDigestWithDetails | null> {
     const now = Date.now();
 
     if (this.digestBreaker.state === 'open') {
@@ -220,7 +243,7 @@ export class DataLoaderManager implements AppModule {
         { signal: AbortSignal.timeout(this.digestRequestTimeoutMs) },
       );
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json() as ListFeedDigestResponse;
+      const data = await resp.json() as ListFeedDigestWithDetails;
       const catCount = Object.keys(data.categories ?? {}).length;
       console.info(`[News] Digest fetched: ${catCount} categories`);
       this.lastGoodDigest = data;
@@ -238,13 +261,13 @@ export class DataLoaderManager implements AppModule {
     }
   }
 
-  private persistDigest(data: ListFeedDigestResponse): void {
+  private persistDigest(data: ListFeedDigestWithDetails): void {
     setPersistentCache('digest:last-good', data).catch(() => {});
   }
 
-  private async loadPersistedDigest(): Promise<ListFeedDigestResponse | null> {
+  private async loadPersistedDigest(): Promise<ListFeedDigestWithDetails | null> {
     try {
-      const envelope = await getPersistentCache<ListFeedDigestResponse>('digest:last-good');
+      const envelope = await getPersistentCache<ListFeedDigestWithDetails>('digest:last-good');
       if (!envelope) return null;
       if (Date.now() - envelope.updatedAt > this.persistedDigestMaxAgeMs) return null;
       this.lastGoodDigest = envelope.data;
@@ -265,6 +288,57 @@ export class DataLoaderManager implements AppModule {
   private selectLimitedFeeds<T>(feeds: T[], maxFeeds: number): T[] {
     if (feeds.length <= maxFeeds) return feeds;
     return feeds.slice(0, maxFeeds);
+  }
+
+  private toDigestReasonLabel(detail: FeedStatusDetail): string {
+    if (detail.status === 'timeout' || detail.reason === 'feed_timeout') return 'timeout';
+    if (detail.reason === 'network_error') return 'network';
+    if (detail.reason === 'upstream_http_error') return detail.statusCode ? `http-${detail.statusCode}` : 'http';
+    if (detail.status === 'empty' || detail.reason === 'no_items_in_feed') return 'empty';
+    if (detail.reason === 'overall_deadline_exceeded') return 'deadline';
+    if (detail.reason === 'fetch_failed') return 'fetch';
+    return (detail.reason || detail.status || 'unknown').replace(/_/g, '-');
+  }
+
+  private summarizeDigestIssuesForCategory(
+    category: string,
+    digest: ListFeedDigestWithDetails | null | undefined,
+    enabledNames: Set<string>,
+  ): CategoryDigestIssueSummary | null {
+    const details = digest?.feedStatusDetails;
+    if (!details) return null;
+
+    const failures = Object.entries(details)
+      .filter(([feedName, detail]) => {
+        if (!enabledNames.has(feedName)) return false;
+        if (detail.status === 'ok') return false;
+        return detail.category === category;
+      })
+      .map(([feedName, detail]) => ({ feedName, detail }));
+
+    if (failures.length === 0) return null;
+
+    const reasonCounts = new Map<string, number>();
+    for (const { detail } of failures) {
+      const label = this.toDigestReasonLabel(detail);
+      reasonCounts.set(label, (reasonCounts.get(label) || 0) + 1);
+    }
+
+    const reasonSummary = [...reasonCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([reason, count]) => `${reason}×${count}`)
+      .join(', ');
+
+    const sampleFeeds = failures
+      .slice(0, 3)
+      .map(({ feedName, detail }) => `${feedName} ${this.toDigestReasonLabel(detail)}`)
+      .join(', ');
+
+    return {
+      reasonSummary,
+      message: `${t('common.noNewsAvailable')} (${reasonSummary}${sampleFeeds ? `; ${sampleFeeds}` : ''})`,
+    };
   }
 
   private shouldShowIntelligenceNotifications(): boolean {
@@ -557,7 +631,7 @@ export class DataLoaderManager implements AppModule {
     this.applyTimeRangeFilterToNewsPanelsDebounced();
   }
 
-  private async loadNewsCategory(category: string, feeds: typeof FEEDS.politics, digest?: ListFeedDigestResponse | null): Promise<NewsItem[]> {
+  private async loadNewsCategory(category: string, feeds: typeof FEEDS.politics, digest?: ListFeedDigestWithDetails | null): Promise<NewsItem[]> {
     try {
       const panel = this.ctx.newsPanels[category];
 
@@ -578,6 +652,9 @@ export class DataLoaderManager implements AppModule {
         let items = (digest.categories[category]?.items ?? [])
           .map(protoItemToNewsItem)
           .filter(i => enabledNames.has(i.source));
+        const digestIssue = items.length === 0
+          ? this.summarizeDigestIssuesForCategory(category, digest, enabledNames)
+          : null;
 
         ingestHeadlines(items.map(i => ({ title: i.title, pubDate: i.pubDate, source: i.source, link: i.link })));
 
@@ -599,53 +676,20 @@ export class DataLoaderManager implements AppModule {
         this.flashMapForNews(items);
         this.renderNewsForCategory(category, items);
 
-        this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
-          status: 'ok',
-          itemCount: items.length,
-        });
-
-        if (panel) {
-          try {
-            const baseline = await updateBaseline(`news:${category}`, items.length);
-            const deviation = calculateDeviation(items.length, baseline);
-            panel.setDeviation(deviation.zScore, deviation.percentChange, deviation.level);
-          } catch (e) { console.warn(`[Baseline] news:${category} write failed:`, e); }
+        if (digestIssue) {
+          panel?.showError(digestIssue.message);
+          panel?.setErrorState(true, digestIssue.message);
+          this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
+            status: 'error',
+            errorMessage: digestIssue.reasonSummary,
+          });
+        } else {
+          panel?.setErrorState(false);
+          this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
+            status: 'ok',
+            itemCount: items.length,
+          });
         }
-
-        return items;
-      }
-
-      // Digest branch: server already aggregated feeds — map proto items to client types
-      if (digest?.categories && category in digest.categories) {
-        const enabledNames = new Set(enabledFeeds.map(f => f.name));
-        let items = (digest.categories[category]?.items ?? [])
-          .map(protoItemToNewsItem)
-          .filter(i => enabledNames.has(i.source));
-
-        ingestHeadlines(items.map(i => ({ title: i.title, pubDate: i.pubDate, source: i.source, link: i.link })));
-
-        const aiCandidates = items
-          .filter(i => i.threat?.source === 'keyword')
-          .sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime())
-          .slice(0, AI_CLASSIFY_MAX_PER_FEED);
-        for (const item of aiCandidates) {
-          if (!canQueueAiClassification(item.title)) continue;
-          classifyWithAI(item.title, SITE_VARIANT).then(ai => {
-            if (ai && item.threat && ai.confidence > item.threat.confidence) {
-              item.threat = ai;
-              item.isAlert = ai.level === 'critical' || ai.level === 'high';
-            }
-          }).catch(() => {});
-        }
-
-        checkBatchForBreakingAlerts(items);
-        this.flashMapForNews(items);
-        this.renderNewsForCategory(category, items);
-
-        this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
-          status: 'ok',
-          itemCount: items.length,
-        });
 
         if (panel) {
           try {
@@ -696,6 +740,7 @@ export class DataLoaderManager implements AppModule {
       if (staleItems.length > 0) {
         console.warn(`[News] Digest missing for "${category}", serving stale headlines (${staleItems.length})`);
         this.renderNewsForCategory(category, staleItems);
+        panel?.setErrorState(false);
         this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
           status: 'ok',
           itemCount: staleItems.length,
@@ -706,6 +751,7 @@ export class DataLoaderManager implements AppModule {
       if (!this.isPerFeedFallbackEnabled()) {
         console.warn(`[News] Digest missing for "${category}", limited per-feed fallback disabled`);
         this.renderNewsForCategory(category, []);
+        panel?.setErrorState(true, 'Digest unavailable');
         this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
           status: 'error',
           errorMessage: 'Digest unavailable',
@@ -742,8 +788,14 @@ export class DataLoaderManager implements AppModule {
           const failedFeeds = fallbackFeeds.filter(f => failures.has(f.name));
           if (failedFeeds.length > 0) {
             const names = failedFeeds.map(f => f.name).join(', ');
-            panel.showError(`${t('common.noNewsAvailable')} (${names} failed)`);
+            const message = `${t('common.noNewsAvailable')} (${names} failed)`;
+            panel.showError(message);
+            panel.setErrorState(true, message);
+          } else {
+            panel.setErrorState(true, t('common.noNewsAvailable'));
           }
+        } else {
+          panel.setErrorState(false);
         }
 
         try {
@@ -828,8 +880,17 @@ export class DataLoaderManager implements AppModule {
         const intel = (digest.categories['intel']?.items ?? [])
           .map(protoItemToNewsItem)
           .filter(i => enabledIntelNames.has(i.source));
+        const intelDigestIssue = intel.length === 0
+          ? this.summarizeDigestIssuesForCategory('intel', digest, enabledIntelNames)
+          : null;
         checkBatchForBreakingAlerts(intel);
         this.renderNewsForCategory('intel', intel);
+        if (intelDigestIssue) {
+          intelPanel?.showError(intelDigestIssue.message);
+          intelPanel?.setErrorState(true, intelDigestIssue.message);
+        } else {
+          intelPanel?.setErrorState(false);
+        }
         if (intelPanel) {
           try {
             const baseline = await updateBaseline('news:intel', intel.length);
@@ -837,7 +898,11 @@ export class DataLoaderManager implements AppModule {
             intelPanel.setDeviation(deviation.zScore, deviation.percentChange, deviation.level);
           } catch (e) { console.warn('[Baseline] news:intel write failed:', e); }
         }
-        this.ctx.statusPanel?.updateFeed('Intel', { status: 'ok', itemCount: intel.length });
+        if (intelDigestIssue) {
+          this.ctx.statusPanel?.updateFeed('Intel', { status: 'error', errorMessage: intelDigestIssue.reasonSummary });
+        } else {
+          this.ctx.statusPanel?.updateFeed('Intel', { status: 'ok', itemCount: intel.length });
+        }
         collectedNews.push(...intel);
         this.flashMapForNews(intel);
       } else {
@@ -845,6 +910,7 @@ export class DataLoaderManager implements AppModule {
         if (staleIntel.length > 0) {
           console.warn(`[News] Intel digest missing, serving stale headlines (${staleIntel.length})`);
           this.renderNewsForCategory('intel', staleIntel);
+          intelPanel?.setErrorState(false);
           if (intelPanel) {
             try {
               const baseline = await updateBaseline('news:intel', staleIntel.length);
@@ -857,6 +923,7 @@ export class DataLoaderManager implements AppModule {
         } else if (!this.isPerFeedFallbackEnabled()) {
           console.warn('[News] Intel digest missing, limited per-feed fallback disabled');
           delete this.ctx.newsByCategory['intel'];
+          intelPanel?.setErrorState(true, 'Digest unavailable');
           this.ctx.statusPanel?.updateFeed('Intel', { status: 'error', errorMessage: 'Digest unavailable' });
         } else {
           const fallbackIntelFeeds = this.selectLimitedFeeds(enabledIntelSources, this.perFeedFallbackIntelFeedLimit);
@@ -871,6 +938,20 @@ export class DataLoaderManager implements AppModule {
             const intel = intelResult[0].value;
             checkBatchForBreakingAlerts(intel);
             this.renderNewsForCategory('intel', intel);
+            if (intel.length === 0) {
+              const failures = getFeedFailures();
+              const failedFeeds = fallbackIntelFeeds.filter(f => failures.has(f.name));
+              if (failedFeeds.length > 0) {
+                const names = failedFeeds.map(f => f.name).join(', ');
+                const message = `${t('common.noNewsAvailable')} (${names} failed)`;
+                intelPanel?.showError(message);
+                intelPanel?.setErrorState(true, message);
+              } else {
+                intelPanel?.setErrorState(true, t('common.noNewsAvailable'));
+              }
+            } else {
+              intelPanel?.setErrorState(false);
+            }
             if (intelPanel) {
               try {
                 const baseline = await updateBaseline('news:intel', intel.length);
