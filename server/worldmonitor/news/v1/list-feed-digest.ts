@@ -36,9 +36,17 @@ const VALID_VARIANTS = new Set(['full', 'tech', 'finance', 'happy']);
 const fallbackDigestCache = new Map<string, { data: ListFeedDigestResponse; ts: number }>();
 const ITEMS_PER_FEED = 5;
 const MAX_ITEMS_PER_CATEGORY = 20;
-const FEED_TIMEOUT_MS = 8_000;
-const OVERALL_DEADLINE_MS = 25_000;
-const BATCH_CONCURRENCY = 20;
+
+function readPositiveIntEnv(key: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[key];
+  const parsed = Number.parseInt(String(raw || ''), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+const FEED_TIMEOUT_MS = readPositiveIntEnv('RSS_DIGEST_FEED_TIMEOUT_MS', 15_000, 4_000, 60_000);
+const OVERALL_DEADLINE_MS = readPositiveIntEnv('RSS_DIGEST_OVERALL_DEADLINE_MS', 60_000, 10_000, 180_000);
+const BATCH_CONCURRENCY = readPositiveIntEnv('RSS_DIGEST_BATCH_CONCURRENCY', 8, 1, 20);
 
 const LEVEL_TO_PROTO: Record<ThreatLevel, ProtoThreatLevel> = {
   critical: 'THREAT_LEVEL_CRITICAL',

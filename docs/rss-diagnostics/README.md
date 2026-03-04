@@ -18,6 +18,18 @@ This project now supports runtime tuning for RSS connectivity and better feed fa
   - Also used by server feed source selection in `server/worldmonitor/news/v1/_feeds.ts`.
   - Desktop sidecar supports runtime updates through `/api/local-env-update` (`key=RSS_APNEWS_FALLBACK_URL`).
 
+- `RSS_DIGEST_FEED_TIMEOUT_MS`
+  - Server-side digest per-feed timeout in milliseconds.
+  - Default: `15000`.
+
+- `RSS_DIGEST_OVERALL_DEADLINE_MS`
+  - Server-side digest total deadline in milliseconds.
+  - Default: `60000`.
+
+- `RSS_DIGEST_BATCH_CONCURRENCY`
+  - Server-side digest feed concurrency (`1-20`).
+  - Default: `8`.
+
 ## New response field (news digest)
 
 Endpoint: `/api/news/v1/list-feed-digest?variant=<...>&lang=<...>`
