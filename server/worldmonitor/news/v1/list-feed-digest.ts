@@ -45,8 +45,8 @@ function readPositiveIntEnv(key: string, fallback: number, min: number, max: num
 }
 
 const relayAvailable = Boolean(getRelayBaseUrl());
-const FEED_TIMEOUT_MS = readPositiveIntEnv('RSS_DIGEST_FEED_TIMEOUT_MS', relayAvailable ? 10_000 : 9_000, 3_000, 30_000);
-const OVERALL_DEADLINE_MS = readPositiveIntEnv('RSS_DIGEST_OVERALL_DEADLINE_MS', relayAvailable ? 40_000 : 32_000, 8_000, 120_000);
+const FEED_TIMEOUT_MS = readPositiveIntEnv('RSS_DIGEST_FEED_TIMEOUT_MS', relayAvailable ? 10_000 : 8_000, 3_000, 30_000);
+const OVERALL_DEADLINE_MS = readPositiveIntEnv('RSS_DIGEST_OVERALL_DEADLINE_MS', relayAvailable ? 40_000 : 55_000, 8_000, 120_000);
 const BATCH_CONCURRENCY = readPositiveIntEnv('RSS_DIGEST_BATCH_CONCURRENCY', relayAvailable ? 10 : 12, 1, 24);
 
 const LEVEL_TO_PROTO: Record<ThreatLevel, ProtoThreatLevel> = {

@@ -38,6 +38,18 @@ Prioritize panel recovery in this order:
 - `/api/oref-alerts` => `503` without relay
 - `/api/conflict/v1/list-ucdp-events` => `events: 0` without token/seed
 
+### Follow-up snapshot (same day, after round-3.1 tuning)
+
+- `/api/news/v1/list-feed-digest?variant=full&lang=en` => `feeds:85`, `ok:42`, `failed:43` (previously `ok:23-24`)
+- Category coverage improved:
+  - `asia` items: `15` (previously `0`)
+  - `thinktanks` items: `10` (previously `0`)
+- `keys:check` now auto-loads `.env.local`:
+  - `FRED_API_KEY`: `OK`
+  - `UCDP_ACCESS_TOKEN`: `MISSING`
+- `relay:smoke` now auto-loads `.env.local` and confirms:
+  - `WS_RELAY_URL`: `MISSING`
+
 ## Bucket classification
 
 ### A) 可无 key 本地可修

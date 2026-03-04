@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
+import { loadEnvLocal } from './_load-env-local.mjs';
 
 function toHttpBase(raw) {
   if (!raw) return '';
@@ -52,6 +53,11 @@ async function checkEndpoint(name, url, timeoutMs = 12000) {
 }
 
 async function main() {
+  const envLoad = loadEnvLocal();
+  if (envLoad.loaded) {
+    console.log(`[relay-smoke] loaded ${envLoad.count} vars from ${envLoad.path}`);
+  }
+
   const relayBase = toHttpBase(process.env.WS_RELAY_URL);
   if (!relayBase) {
     console.error('[relay-smoke] WS_RELAY_URL is not set.');
@@ -84,4 +90,3 @@ main().catch((error) => {
   console.error('[relay-smoke] fatal error:', error);
   process.exit(3);
 });
-

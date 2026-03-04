@@ -20,6 +20,8 @@ npm run relay:smoke
 npm run keys:check
 ```
 
+Both scripts auto-load project-root `.env.local` when present.
+
 Template for operators:
 
 ```bash
@@ -44,11 +46,11 @@ cp .env.local.cn.example .env.local
 
 - `RSS_DIGEST_FEED_TIMEOUT_MS`
   - Server-side digest per-feed timeout in milliseconds.
-  - Default: `9000` without relay, `10000` with relay.
+  - Default: `8000` without relay, `10000` with relay.
 
 - `RSS_DIGEST_OVERALL_DEADLINE_MS`
   - Server-side digest total deadline in milliseconds.
-  - Default: `32000` without relay, `40000` with relay.
+  - Default: `55000` without relay, `40000` with relay.
 
 - `RSS_DIGEST_BATCH_CONCURRENCY`
   - Server-side digest feed concurrency (`1-20`).

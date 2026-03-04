@@ -93,11 +93,12 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
       { name: 'El Universo', url: 'https://www.eluniverso.com/arc/outboundfeeds/rss/category/noticias/?outputType=xml', lang: 'es' },
     ],
     asia: [
-      { name: 'VnExpress', url: 'https://vnexpress.net/rss/tin-moi-nhat.rss', lang: 'vi' },
+      { name: 'VnExpress', url: 'https://vnexpress.net/rss/tin-moi-nhat.rss' },
+      { name: 'France 24 Asia-Pacific', url: 'https://www.france24.com/en/asia-pacific/rss' },
+      { name: 'Japan Today World', url: 'https://japantoday.com/category/world/feed' },
       { name: 'BBC Asia', url: 'https://feeds.bbci.co.uk/news/world/asia/rss.xml' },
       { name: 'The Diplomat', url: 'https://thediplomat.com/feed/' },
       { name: 'Nikkei Asia', url: gn('site:asia.nikkei.com when:3d') },
-      { name: 'CNA', url: 'https://www.channelnewsasia.com/api/v1/rss-outbound-feed?_format=xml' },
       { name: 'NDTV', url: 'https://feeds.feedburner.com/ndtvnews-top-stories' },
     ],
     energy: [
@@ -107,6 +108,7 @@ export const VARIANT_FEEDS: Record<string, Record<string, ServerFeed[]>> = {
     ],
     thinktanks: [
       { name: 'Stimson Center', url: 'https://www.stimson.org/feed/' },
+      { name: 'Crisis Group', url: 'https://www.crisisgroup.org/rss' },
       { name: 'Foreign Policy', url: 'https://foreignpolicy.com/feed/' },
       { name: 'Atlantic Council', url: 'https://www.atlanticcouncil.org/feed/' },
       { name: 'Foreign Affairs', url: 'https://www.foreignaffairs.com/rss.xml' },

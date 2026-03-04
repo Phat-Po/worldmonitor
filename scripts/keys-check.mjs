@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import process from 'node:process';
+import { loadEnvLocal } from './_load-env-local.mjs';
 
 const keyGroups = [
   {
@@ -38,6 +39,13 @@ function printGroup(group) {
 }
 
 function main() {
+  const envLoad = loadEnvLocal();
+  if (envLoad.loaded) {
+    console.log(`[keys-check] loaded ${envLoad.count} vars from ${envLoad.path}`);
+  } else {
+    console.log(`[keys-check] .env.local not found at ${envLoad.path}`);
+  }
+
   console.log('[keys-check] environment readiness summary');
   keyGroups.forEach(printGroup);
 
@@ -52,4 +60,3 @@ function main() {
 }
 
 main();
-
