@@ -2,7 +2,6 @@ import './styles/base-layer.css';
 import './styles/happy-theme.css';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import * as Sentry from '@sentry/browser';
-import { inject } from '@vercel/analytics';
 import { App } from './App';
 
 const sentryDsn = import.meta.env.VITE_SENTRY_DSN?.trim();
@@ -11,11 +10,11 @@ const sentryDsn = import.meta.env.VITE_SENTRY_DSN?.trim();
 Sentry.init({
   dsn: sentryDsn || undefined,
   release: `worldmonitor@${__APP_VERSION__}`,
-  environment: location.hostname === 'worldmonitor.app' ? 'production'
+  environment: location.hostname === 'world.metalthirsty.com' ? 'production'
     : location.hostname.includes('vercel.app') ? 'preview'
     : 'development',
   enabled: Boolean(sentryDsn) && !location.hostname.startsWith('localhost') && !('__TAURI_INTERNALS__' in window),
-  sendDefaultPii: true,
+  sendDefaultPii: false,
   tracesSampleRate: 0.1,
   ignoreErrors: [
     'Invalid WebGL2RenderingContext',
@@ -214,9 +213,6 @@ import { clearChunkReloadGuard, installChunkReloadGuard } from '@/bootstrap/chun
 
 // Auto-reload on stale chunk 404s after deployment (Vite fires this for modulepreload failures).
 const chunkReloadStorageKey = installChunkReloadGuard(__APP_VERSION__);
-
-// Initialize Vercel Analytics
-inject();
 
 // Initialize dynamic meta tags for sharing
 initMetaTags();

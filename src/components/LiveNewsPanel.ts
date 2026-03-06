@@ -359,7 +359,7 @@ export class LiveNewsPanel extends Panel {
   private idleCallbackId: number | ReturnType<typeof setTimeout> | null = null;
 
   constructor() {
-    super({ id: 'live-news', title: t('panels.liveNews'), className: 'panel-wide' });
+    super({ id: 'live-news', title: t('panels.liveNews'), className: 'panel-wide panel-video panel-video-news' });
     this.youtubeOrigin = LiveNewsPanel.resolveYouTubeOrigin();
     this.playerElementId = `live-news-player-${Date.now()}`;
     this.channels = loadChannelsFromStorage();
@@ -368,6 +368,7 @@ export class LiveNewsPanel extends Panel {
     this.createLiveButton();
     this.createMuteButton();
     this.createChannelSwitcher();
+    this.enableAutoMinHeight(() => this.measureIdealPanelHeight());
     this.setupBridgeMessageListener();
     this.renderPlaceholder();
     this.setupLazyInit();
@@ -377,6 +378,23 @@ export class LiveNewsPanel extends Panel {
       this.applyIdleMode();
     });
     document.addEventListener('keydown', this.boundFullscreenEscHandler);
+  }
+
+  private measureIdealPanelHeight(): number | null {
+    if (!this.element.isConnected) return null;
+
+    const contentStyle = window.getComputedStyle(this.content);
+    const horizontalPadding = (parseFloat(contentStyle.paddingLeft || '0') || 0) + (parseFloat(contentStyle.paddingRight || '0') || 0);
+    const verticalPadding = (parseFloat(contentStyle.paddingTop || '0') || 0) + (parseFloat(contentStyle.paddingBottom || '0') || 0);
+    const mediaWidth = this.content.clientWidth - horizontalPadding;
+    if (mediaWidth <= 0) return null;
+
+    const headerHeight = this.header.getBoundingClientRect().height;
+    const toolbarHeight = (this.element.querySelector('.live-news-toolbar') as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
+    const videoHeight = mediaWidth * (9 / 16);
+    const handleAllowance = 14;
+
+    return headerHeight + toolbarHeight + verticalPadding + videoHeight + handleAllowance;
   }
 
   private renderPlaceholder(): void {
@@ -401,6 +419,7 @@ export class LiveNewsPanel extends Panel {
     container.appendChild(playBtn);
     container.addEventListener('click', () => this.triggerInit());
     this.content.appendChild(container);
+    this.requestAutoMinHeightSync();
   }
 
   private setupLazyInit(): void {
@@ -459,7 +478,7 @@ export class LiveNewsPanel extends Panel {
 
   private get embedOrigin(): string {
     if (isDesktopRuntime()) return `http://localhost:${getLocalApiPort()}`;
-    try { return new URL(getRemoteApiBaseUrl()).origin; } catch { return 'https://worldmonitor.app'; }
+    try { return new URL(getRemoteApiBaseUrl()).origin; } catch { return 'https://world.metalthirsty.com'; }
   }
 
   private setupBridgeMessageListener(): void {
@@ -496,9 +515,7 @@ export class LiveNewsPanel extends Panel {
   }
 
   private static resolveYouTubeOrigin(): string | null {
-    const fallbackOrigin = SITE_VARIANT === 'tech'
-      ? 'https://worldmonitor.app'
-      : 'https://worldmonitor.app';
+    const fallbackOrigin = 'https://world.metalthirsty.com';
 
     try {
       const { protocol, origin, host } = window.location;
@@ -982,6 +999,7 @@ export class LiveNewsPanel extends Panel {
         <button class="offline-retry" onclick="this.closest('.panel').querySelector('.live-channel-btn.active')?.click()">${t('common.retry')}</button>
       </div>
     `;
+    this.requestAutoMinHeightSync();
   }
 
   private showEmbedError(channel: LiveChannel, errorCode: number): void {
@@ -998,6 +1016,7 @@ export class LiveNewsPanel extends Panel {
         <a class="offline-retry" href="${sanitizeUrl(watchUrl)}" target="_blank" rel="noopener noreferrer">${t('components.liveNews.openOnYouTube')}</a>
       </div>
     `;
+    this.requestAutoMinHeightSync();
   }
 
   private renderPlayer(): void {
@@ -1020,6 +1039,7 @@ export class LiveNewsPanel extends Panel {
     }
 
     this.content.appendChild(this.playerContainer);
+    this.requestAutoMinHeightSync();
   }
 
   private postToEmbed(msg: Record<string, unknown>): void {
@@ -1096,6 +1116,7 @@ export class LiveNewsPanel extends Panel {
     this.playerContainer.appendChild(iframe);
     this.desktopEmbedIframe = iframe;
     this.startBotCheckTimeout();
+    this.requestAutoMinHeightSync();
   }
 
   private renderNativeHlsPlayer(): void {
@@ -1162,6 +1183,7 @@ export class LiveNewsPanel extends Panel {
     this.playerContainer.appendChild(video);
     this.isPlayerReady = true;
     this.currentVideoId = this.activeChannel.videoId || null;
+    this.requestAutoMinHeightSync();
 
     // WKWebView blocks autoplay without user gesture. Force muted play, then restore.
     if (this.isPlaying) {

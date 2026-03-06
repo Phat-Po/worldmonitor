@@ -1,5 +1,5 @@
 import type { AppContext, AppModule } from '@/app/app-context';
-import type { RelatedAsset } from '@/types';
+import type { PanelConfig, RelatedAsset } from '@/types';
 import type { TheaterPostureSummary } from '@/services/military-surge';
 import {
   MapContainer,
@@ -50,7 +50,7 @@ import { SpeciesComebackPanel } from '@/components/SpeciesComebackPanel';
 import { RenewableEnergyPanel } from '@/components/RenewableEnergyPanel';
 import { GivingPanel } from '@/components';
 import { focusInvestmentOnMap } from '@/services/investments-focus';
-import { debounce, saveToStorage, loadFromStorage } from '@/utils';
+import { debounce, saveToStorage, loadFromStorage, syncPanelsEmptyState } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
 import {
   FEEDS,
@@ -63,6 +63,8 @@ import { BETA_MODE } from '@/config/beta';
 import { t } from '@/services/i18n';
 import { getCurrentTheme } from '@/utils';
 import { trackCriticalBannerAction } from '@/services/analytics';
+import { dataFreshness } from '@/services/data-freshness';
+import type { DataSourceState } from '@/services/data-freshness';
 
 export interface PanelLayoutCallbacks {
   openCountryStory: (code: string, name: string) => void;
@@ -78,6 +80,7 @@ export class PanelLayoutManager implements AppModule {
   private callbacks: PanelLayoutCallbacks;
   private panelDragCleanupHandlers: Array<() => void> = [];
   private criticalBannerEl: HTMLElement | null = null;
+  private unavailUnsubscribe: (() => void) | null = null;
   private readonly applyTimeRangeFilterDebounced: (() => void) & { cancel(): void };
 
   constructor(ctx: AppContext, callbacks: PanelLayoutCallbacks) {
@@ -111,6 +114,8 @@ export class PanelLayoutManager implements AppModule {
     this.ctx.speciesPanel?.destroy();
     this.ctx.renewablePanel?.destroy();
 
+    this.unavailUnsubscribe?.();
+    this.unavailUnsubscribe = null;
     window.removeEventListener('resize', this.ensureCorrectZones);
   }
 
@@ -119,45 +124,14 @@ export class PanelLayoutManager implements AppModule {
       <div class="header">
         <div class="header-left">
           <div class="variant-switcher">${(() => {
-        const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-        const vHref = (v: string, prod: string) => local || SITE_VARIANT === v ? '#' : prod;
-        const vTarget = (_v: string) => '';
         return `
-            <a href="${vHref('full', 'https://worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'full' ? 'active' : ''}"
+            <a href="#"
+               class="variant-option active"
                data-variant="full"
-               ${vTarget('full')}
-               title="${t('header.world')}${SITE_VARIANT === 'full' ? ` ${t('common.currentVariant')}` : ''}">
+               title="${t('header.world')} ${t('common.currentVariant')}">
               <span class="variant-icon">🌍</span>
               <span class="variant-label">${t('header.world')}</span>
-            </a>
-            <span class="variant-divider"></span>
-            <a href="${vHref('tech', 'https://tech.worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'tech' ? 'active' : ''}"
-               data-variant="tech"
-               ${vTarget('tech')}
-               title="${t('header.tech')}${SITE_VARIANT === 'tech' ? ` ${t('common.currentVariant')}` : ''}">
-              <span class="variant-icon">💻</span>
-              <span class="variant-label">${t('header.tech')}</span>
-            </a>
-            <span class="variant-divider"></span>
-            <a href="${vHref('finance', 'https://finance.worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'finance' ? 'active' : ''}"
-               data-variant="finance"
-               ${vTarget('finance')}
-               title="${t('header.finance')}${SITE_VARIANT === 'finance' ? ` ${t('common.currentVariant')}` : ''}">
-              <span class="variant-icon">📈</span>
-              <span class="variant-label">${t('header.finance')}</span>
-            </a>
-            ${SITE_VARIANT === 'happy' ? `<span class="variant-divider"></span>
-            <a href="${vHref('happy', 'https://happy.worldmonitor.app')}"
-               class="variant-option active"
-               data-variant="happy"
-               ${vTarget('happy')}
-               title="Good News ${t('common.currentVariant')}">
-              <span class="variant-icon">☀️</span>
-              <span class="variant-label">Good News</span>
-            </a>` : ''}`;
+            </a>`;
       })()}</div>
           <span class="logo">MONITOR</span><span class="version">v${__APP_VERSION__}</span>${BETA_MODE ? '<span class="beta-badge">BETA</span>' : ''}
           <a href="https://x.com/eliehabib" target="_blank" rel="noopener" class="credit-link">
@@ -195,6 +169,10 @@ export class PanelLayoutManager implements AppModule {
             </button>
             <div class="download-dropdown" id="downloadDropdown"></div>
           </div>`}
+          <div class="unavail-wrapper" id="unavailWrapper" style="display:none">
+            <button class="unavail-btn" id="unavailBtn"></button>
+            <div class="unavail-dropdown" id="unavailDropdown"></div>
+          </div>
           <button class="refresh-unavailable-btn" id="refreshUnavailableBtn" title="${t('header.refreshUnavailableTitle')}">↻ ${t('header.refreshUnavailable')}</button>
           <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> ${t('header.search')}</button>
           ${this.ctx.isDesktopApp ? '' : `<button class="copy-link-btn" id="copyLinkBtn">${t('header.copyLink')}</button>`}
@@ -231,11 +209,21 @@ export class PanelLayoutManager implements AppModule {
           <div class="map-resize-handle" id="mapResizeHandle"></div>
           <div class="map-bottom-grid" id="mapBottomGrid"></div>
         </div>
-        <div class="panels-grid" id="panelsGrid"></div>
+        <div class="panels-grid" id="panelsGrid">
+          <div class="panels-empty-state" data-panels-empty-state hidden aria-hidden="true">
+            <span class="panels-empty-eyebrow">Panels hidden</span>
+            <h3 class="panels-empty-title">No dashboard panels are visible</h3>
+            <p class="panels-empty-copy">Your saved layout currently hides every panel. Restore the default panel set or re-enable panels from Settings.</p>
+            <button class="panels-empty-restore-btn" id="restorePanelsBtn" type="button">Restore default panels</button>
+          </div>
+        </div>
       </div>
     `;
 
     this.createPanels();
+    document.getElementById('restorePanelsBtn')?.addEventListener('click', () => {
+      this.restoreDefaultPanels();
+    });
 
     if (this.ctx.isMobile) {
       this.setupMobileMapToggle();
@@ -349,6 +337,7 @@ export class PanelLayoutManager implements AppModule {
       const panel = this.ctx.panels[key];
       panel?.toggle(config.enabled);
     });
+    syncPanelsEmptyState();
   }
 
   private createPanels(): void {
@@ -792,6 +781,25 @@ export class PanelLayoutManager implements AppModule {
 
     this.applyPanelSettings();
     this.applyInitialUrlState();
+    this.initUnavailableDropdown();
+  }
+
+  private restoreDefaultPanels(): void {
+    const restoredPanels = Object.fromEntries(
+      Object.entries(DEFAULT_PANELS).map(([key, config]) => [key, { ...config }])
+    ) as Record<string, PanelConfig>;
+
+    if (this.ctx.isDesktopApp && !restoredPanels['runtime-config']) {
+      restoredPanels['runtime-config'] = {
+        name: 'Desktop Configuration',
+        enabled: true,
+        priority: 2,
+      };
+    }
+
+    this.ctx.panelSettings = restoredPanels;
+    saveToStorage(STORAGE_KEYS.panels, restoredPanels);
+    this.applyPanelSettings();
   }
 
   private applyTimeRangeFilterToNewsPanels(): void {
@@ -1017,8 +1025,75 @@ export class PanelLayoutManager implements AppModule {
     let dragStarted = false;
     let startX = 0;
     let startY = 0;
+    let pointerOffsetX = 0;
+    let pointerOffsetY = 0;
     let rafId = 0;
+    let placeholderEl: HTMLElement | null = null;
     const DRAG_THRESHOLD = 8;
+
+    const resetFloatingStyles = () => {
+      el.classList.remove('panel-drag-floating');
+      el.style.position = '';
+      el.style.left = '';
+      el.style.top = '';
+      el.style.width = '';
+      el.style.height = '';
+      el.style.zIndex = '';
+      el.style.pointerEvents = '';
+      el.style.transform = '';
+      el.style.transition = '';
+      el.style.margin = '';
+      el.style.boxSizing = '';
+    };
+
+    const createPlaceholder = () => {
+      const placeholder = document.createElement('div');
+      placeholder.className = Array.from(el.classList)
+        .filter((className) => className !== 'panel-drag-floating' && className !== 'panel-settling')
+        .join(' ');
+      placeholder.classList.add('panel-placeholder');
+      placeholder.dataset.panel = key;
+      placeholder.setAttribute('aria-hidden', 'true');
+      return placeholder;
+    };
+
+    const updateFloatingPosition = (clientX: number, clientY: number) => {
+      const left = clientX - pointerOffsetX;
+      const top = clientY - pointerOffsetY;
+      el.style.transform = `translate3d(${left}px, ${top}px, 0) rotate(-0.25deg) scale(1.012)`;
+    };
+
+    const beginFloatingDrag = (clientX: number, clientY: number) => {
+      const rect = el.getBoundingClientRect();
+      pointerOffsetX = clientX - rect.left;
+      pointerOffsetY = clientY - rect.top;
+      placeholderEl = createPlaceholder();
+      el.parentElement?.insertBefore(placeholderEl, el);
+      document.body.appendChild(el);
+      el.classList.add('panel-drag-floating');
+      document.body.classList.add('panel-drag-active');
+      el.style.position = 'fixed';
+      el.style.left = '0';
+      el.style.top = '0';
+      el.style.width = `${rect.width}px`;
+      el.style.height = `${rect.height}px`;
+      el.style.zIndex = '5000';
+      el.style.pointerEvents = 'none';
+      el.style.transition = 'none';
+      el.style.margin = '0';
+      el.style.boxSizing = 'border-box';
+      updateFloatingPosition(clientX, clientY);
+    };
+
+    const finishFloatingDrag = () => {
+      if (placeholderEl?.parentElement) {
+        placeholderEl.parentElement.insertBefore(el, placeholderEl);
+        placeholderEl.remove();
+      }
+      placeholderEl = null;
+      resetFloatingStyles();
+      document.body.classList.remove('panel-drag-active');
+    };
 
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
@@ -1036,6 +1111,8 @@ export class PanelLayoutManager implements AppModule {
       dragStarted = false;
       startX = e.clientX;
       startY = e.clientY;
+      pointerOffsetX = 0;
+      pointerOffsetY = 0;
       e.preventDefault();
     };
 
@@ -1046,13 +1123,16 @@ export class PanelLayoutManager implements AppModule {
         const dy = Math.abs(e.clientY - startY);
         if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
         dragStarted = true;
-        el.classList.add('dragging');
+        beginFloatingDrag(e.clientX, e.clientY);
       }
+      updateFloatingPosition(e.clientX, e.clientY);
       const cx = e.clientX;
       const cy = e.clientY;
       if (rafId) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        this.handlePanelDragMove(el, cx, cy);
+        if (placeholderEl) {
+          this.handlePanelDragMove(placeholderEl, el.getBoundingClientRect(), cx, cy);
+        }
         rafId = 0;
       });
     };
@@ -1062,7 +1142,7 @@ export class PanelLayoutManager implements AppModule {
       isDragging = false;
       if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
       if (dragStarted) {
-        el.classList.remove('dragging');
+        finishFloatingDrag();
         this.savePanelOrder();
       }
       dragStarted = false;
@@ -1082,18 +1162,84 @@ export class PanelLayoutManager implements AppModule {
       }
       isDragging = false;
       dragStarted = false;
-      el.classList.remove('dragging');
+      finishFloatingDrag();
+      document.body.classList.remove('panel-drag-active');
     });
   }
 
-  private handlePanelDragMove(dragging: HTMLElement, clientX: number, clientY: number): void {
+  private animatePanelReflow(grids: HTMLElement[], mutate: () => void): void {
+    const panels = grids.flatMap((grid) =>
+      Array.from(grid.querySelectorAll<HTMLElement>('.panel:not(.panel-placeholder):not(.hidden)'))
+    );
+    const firstRects = new Map<HTMLElement, DOMRect>();
+    panels.forEach((panel) => firstRects.set(panel, panel.getBoundingClientRect()));
+
+    mutate();
+
+    requestAnimationFrame(() => {
+      panels.forEach((panel) => {
+        const first = firstRects.get(panel);
+        if (!first || !panel.isConnected) return;
+
+        const last = panel.getBoundingClientRect();
+        const dx = first.left - last.left;
+        const dy = first.top - last.top;
+
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+
+        const existingTimer = Number(panel.dataset.reflowTimer || '0');
+        if (existingTimer) window.clearTimeout(existingTimer);
+
+        panel.classList.add('panel-settling');
+        panel.style.transition = 'none';
+        panel.style.transform = `translate(${dx}px, ${dy}px)`;
+        panel.getBoundingClientRect();
+
+        requestAnimationFrame(() => {
+          panel.style.transition = '';
+          panel.style.transform = '';
+        });
+
+        panel.addEventListener('transitionend', () => {
+          panel.classList.remove('panel-settling');
+          delete panel.dataset.reflowTimer;
+        }, { once: true });
+
+        const timerId = window.setTimeout(() => {
+          panel.classList.remove('panel-settling');
+          panel.style.transition = '';
+          panel.style.transform = '';
+          delete panel.dataset.reflowTimer;
+        }, 260);
+        panel.dataset.reflowTimer = String(timerId);
+      });
+    });
+  }
+
+  private moveDraggedPanel(
+    placeholder: HTMLElement,
+    targetGrid: HTMLElement,
+    before: Element | null,
+    grids: HTMLElement[]
+  ): void {
+    const normalizedBefore = before === placeholder ? placeholder.nextElementSibling : before;
+    const currentNext = placeholder.nextElementSibling;
+
+    if (placeholder.parentElement === targetGrid && currentNext === normalizedBefore) {
+      return;
+    }
+
+    this.animatePanelReflow(grids, () => {
+      targetGrid.insertBefore(placeholder, normalizedBefore);
+    });
+  }
+
+  private handlePanelDragMove(placeholder: HTMLElement, dragRect: DOMRect, clientX: number, clientY: number): void {
     const grid = document.getElementById('panelsGrid');
     const bottomGrid = document.getElementById('mapBottomGrid');
     if (!grid || !bottomGrid) return;
 
-    dragging.style.pointerEvents = 'none';
     const target = document.elementFromPoint(clientX, clientY);
-    dragging.style.pointerEvents = '';
 
     if (!target) return;
 
@@ -1105,16 +1251,18 @@ export class PanelLayoutManager implements AppModule {
 
     const currentTargetGrid = targetGrid || (targetPanel ? targetPanel.parentElement as HTMLElement : null);
     if (!currentTargetGrid || (currentTargetGrid !== grid && currentTargetGrid !== bottomGrid)) return;
+    const animationGrids = [grid, bottomGrid];
 
-    if (targetPanel && targetPanel !== dragging && !targetPanel.classList.contains('hidden')) {
+    if (targetPanel && targetPanel !== placeholder && !targetPanel.classList.contains('hidden') && !targetPanel.classList.contains('panel-placeholder')) {
       const targetRect = targetPanel.getBoundingClientRect();
-      const draggingRect = dragging.getBoundingClientRect();
 
       const children = Array.from(currentTargetGrid.children);
-      const dragIdx = children.indexOf(dragging);
+      const dragIdx = children.indexOf(placeholder);
       const targetIdx = children.indexOf(targetPanel);
 
-      const sameRow = Math.abs(draggingRect.top - targetRect.top) < 30;
+      const dragCenterY = dragRect.top + dragRect.height / 2;
+      const targetCenterY = targetRect.top + targetRect.height / 2;
+      const sameRow = Math.abs(dragCenterY - targetCenterY) < Math.min(dragRect.height, targetRect.height) * 0.35;
       const targetMid = sameRow
         ? targetRect.left + targetRect.width / 2
         : targetRect.top + targetRect.height / 2;
@@ -1123,26 +1271,95 @@ export class PanelLayoutManager implements AppModule {
       if (dragIdx === -1) {
         // Moving from one grid to another
         if (cursorPos < targetMid) {
-          currentTargetGrid.insertBefore(dragging, targetPanel);
+          this.moveDraggedPanel(placeholder, currentTargetGrid, targetPanel, animationGrids);
         } else {
-          currentTargetGrid.insertBefore(dragging, targetPanel.nextSibling);
+          this.moveDraggedPanel(placeholder, currentTargetGrid, targetPanel.nextSibling as Element | null, animationGrids);
         }
       } else {
         // Reordering within same grid
         if (dragIdx < targetIdx) {
           if (cursorPos > targetMid) {
-            currentTargetGrid.insertBefore(dragging, targetPanel.nextSibling);
+            this.moveDraggedPanel(placeholder, currentTargetGrid, targetPanel.nextSibling as Element | null, animationGrids);
           }
         } else {
           if (cursorPos < targetMid) {
-            currentTargetGrid.insertBefore(dragging, targetPanel);
+            this.moveDraggedPanel(placeholder, currentTargetGrid, targetPanel, animationGrids);
           }
         }
       }
-    } else if (currentTargetGrid !== dragging.parentElement) {
+    } else if (currentTargetGrid !== placeholder.parentElement) {
       // Dragging over an empty or near-empty grid zone
-      currentTargetGrid.appendChild(dragging);
+      this.moveDraggedPanel(placeholder, currentTargetGrid, null, animationGrids);
     }
+  }
+
+  private initUnavailableDropdown(): void {
+    this.renderUnavailableDropdown();
+    this.unavailUnsubscribe = dataFreshness.subscribe(() => this.renderUnavailableDropdown());
+
+    document.getElementById('unavailBtn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('unavailDropdown')?.classList.toggle('open');
+    });
+
+    document.addEventListener('click', (e) => {
+      const wrapper = document.getElementById('unavailWrapper');
+      if (wrapper && !wrapper.contains(e.target as Node)) {
+        document.getElementById('unavailDropdown')?.classList.remove('open');
+      }
+    });
+  }
+
+  private renderUnavailableDropdown(): void {
+    const wrapper = document.getElementById('unavailWrapper');
+    const btn = document.getElementById('unavailBtn');
+    const dropdown = document.getElementById('unavailDropdown');
+    if (!wrapper || !btn || !dropdown) return;
+
+    const unavail = dataFreshness.getAllSources().filter(
+      (s: DataSourceState) => s.status === 'error' || s.status === 'no_data' || s.status === 'very_stale'
+    );
+
+    if (unavail.length === 0) {
+      wrapper.style.display = 'none';
+      dropdown.classList.remove('open');
+      return;
+    }
+
+    wrapper.style.display = '';
+    btn.textContent = `⚠ ${unavail.length}`;
+    btn.title = `${unavail.length} data source${unavail.length !== 1 ? 's' : ''} unavailable`;
+
+    const groups: [string, DataSourceState[]][] = [
+      ['✕ Error', unavail.filter((s: DataSourceState) => s.status === 'error')],
+      ['○ No data', unavail.filter((s: DataSourceState) => s.status === 'no_data')],
+      ['◐ Very stale', unavail.filter((s: DataSourceState) => s.status === 'very_stale')],
+    ];
+
+    let html = '<div class="unavail-title">Unavailable Sources</div>';
+    for (const [label, items] of groups) {
+      if (items.length === 0) continue;
+      html += `<div class="unavail-group">${label} (${items.length})</div>`;
+      for (const src of items) {
+        const panelId = dataFreshness.getPanelIdForSource(src.id);
+        html += `<div class="unavail-item${panelId ? ' has-panel' : ''}" data-panel="${panelId ?? ''}">
+          <span class="unavail-name">${escapeHtml(src.name)}</span>
+          ${panelId ? `<span class="unavail-panel-badge">${panelId}</span>` : ''}
+        </div>`;
+      }
+    }
+
+    dropdown.innerHTML = html;
+
+    dropdown.querySelectorAll<HTMLElement>('.unavail-item.has-panel').forEach(el => {
+      el.addEventListener('click', () => {
+        const pid = el.dataset.panel;
+        if (!pid) return;
+        document.querySelector<HTMLElement>(`[data-panel="${pid}"]`)
+          ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        dropdown.classList.remove('open');
+      });
+    });
   }
 
   getLocalizedPanelName(panelKey: string, fallback: string): string {

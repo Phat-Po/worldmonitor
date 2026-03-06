@@ -120,7 +120,7 @@ export function getRemoteApiBaseUrl(): string {
   if (fromHosts) return fromHosts;
 
   // Desktop builds may not set VITE_WS_API_URL; default to production.
-  if (isDesktopRuntime()) return 'https://worldmonitor.app';
+  if (isDesktopRuntime()) return 'https://world.metalthirsty.com';
   return '';
 }
 
@@ -147,6 +147,7 @@ function extractHostnames(...urls: (string | undefined)[]): string[] {
 }
 
 const APP_HOSTS = new Set([
+  'world.metalthirsty.com',
   'worldmonitor.app',
   'www.worldmonitor.app',
   'tech.worldmonitor.app',
