@@ -31,6 +31,22 @@ function savePanelSpan(panelId: string, span: number): void {
   localStorage.setItem(PANEL_SPANS_KEY, JSON.stringify(spans));
 }
 
+function hasSavedPanelSpan(panelId: string): boolean {
+  const savedSpan = loadPanelSpans()[panelId];
+  return typeof savedSpan === 'number' && Number.isInteger(savedSpan) && savedSpan >= 1;
+}
+
+function clearPanelSpan(panelId: string): void {
+  const spans = loadPanelSpans();
+  if (!(panelId in spans)) return;
+  delete spans[panelId];
+  if (Object.keys(spans).length === 0) {
+    localStorage.removeItem(PANEL_SPANS_KEY);
+    return;
+  }
+  localStorage.setItem(PANEL_SPANS_KEY, JSON.stringify(spans));
+}
+
 const PANEL_COL_SPANS_KEY = 'worldmonitor-panel-col-spans';
 const ROW_RESIZE_STEP_PX = 80;
 const COL_RESIZE_STEP_PX = 80;
@@ -139,11 +155,18 @@ function setColSpanClass(element: HTMLElement, span: number): void {
   element.classList.add(`col-span-${span}`);
 }
 
+function getDefaultRowSpan(element: HTMLElement): number {
+  return element.classList.contains('panel-wide') ? 2 : 1;
+}
+
 function getRowSpan(element: HTMLElement): number {
+  if (element.classList.contains('auto-span-4')) return 4;
+  if (element.classList.contains('auto-span-3')) return 3;
+  if (element.classList.contains('auto-span-2')) return 2;
   if (element.classList.contains('span-4')) return 4;
   if (element.classList.contains('span-3')) return 3;
   if (element.classList.contains('span-2')) return 2;
-  return 1;
+  return getDefaultRowSpan(element);
 }
 
 function deltaToRowSpan(startSpan: number, deltaY: number): number {
@@ -153,10 +176,46 @@ function deltaToRowSpan(startSpan: number, deltaY: number): number {
   return Math.max(1, Math.min(4, startSpan + spanDelta));
 }
 
-function setSpanClass(element: HTMLElement, span: number): void {
+function clearRowSpanClass(element: HTMLElement): void {
   element.classList.remove('span-1', 'span-2', 'span-3', 'span-4');
+  element.classList.remove('auto-span-1', 'auto-span-2', 'auto-span-3', 'auto-span-4');
+}
+
+function getGridRowMinTrackPx(element: HTMLElement): number {
+  const grid = (element.closest('.panels-grid') || element.closest('.map-bottom-grid')) as HTMLElement | null;
+  if (!grid) return 200;
+  const autoRows = window.getComputedStyle(grid).gridAutoRows;
+  const match = autoRows.match(/(\d+(?:\.\d+)?)px/);
+  const parsed = match ? Number.parseFloat(match[1] ?? '200') : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 200;
+}
+
+function getGridRowGapPx(element: HTMLElement): number {
+  const grid = (element.closest('.panels-grid') || element.closest('.map-bottom-grid')) as HTMLElement | null;
+  if (!grid) return 0;
+  const style = window.getComputedStyle(grid);
+  const parsed = Number.parseFloat(style.rowGap || style.gap || '0');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getAutoRowSpanForHeight(element: HTMLElement, height: number): number {
+  const track = getGridRowMinTrackPx(element);
+  const gap = getGridRowGapPx(element);
+  const minimumSpan = getDefaultRowSpan(element);
+  const rawSpan = Math.ceil((height + gap) / (track + gap));
+  return Math.max(minimumSpan, Math.min(4, rawSpan));
+}
+
+function setSpanClass(element: HTMLElement, span: number, markResized = true): void {
+  clearRowSpanClass(element);
   element.classList.add(`span-${span}`);
-  element.classList.add('resized');
+  element.classList.toggle('resized', markResized);
+}
+
+function setAutoRowSpanClass(element: HTMLElement, span: number): void {
+  clearRowSpanClass(element);
+  element.classList.add(`auto-span-${span}`);
+  element.classList.remove('resized');
 }
 
 export class Panel {
@@ -195,6 +254,10 @@ export class Panel {
   private onColTouchEnd: (() => void) | null = null;
   private onColTouchCancel: (() => void) | null = null;
   private colSpanReconcileRaf: number | null = null;
+  private autoMinHeightObserver: ResizeObserver | null = null;
+  private autoMinHeightMeasure: (() => number | null) | null = null;
+  private autoMinHeightRaf: number | null = null;
+  private autoMinHeightResizeHandler: (() => void) | null = null;
   private readonly contentDebounceMs = 150;
   private pendingContentHtml: string | null = null;
   private contentDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -214,6 +277,7 @@ export class Panel {
     const title = document.createElement('span');
     title.className = 'panel-title';
     title.textContent = options.title;
+    title.title = options.title;
     headerLeft.appendChild(title);
 
     if (options.infoTooltip) {
@@ -245,12 +309,22 @@ export class Panel {
       headerLeft.appendChild(this.newBadgeEl);
     }
 
+    if (options.showCount) {
+      this.countEl = document.createElement('span');
+      this.countEl.className = 'panel-count';
+      this.countEl.textContent = '0';
+      headerLeft.appendChild(this.countEl);
+    }
+
     this.header.appendChild(headerLeft);
+
+    const headerActions = document.createElement('div');
+    headerActions.className = 'panel-header-actions';
 
     this.statusBadgeEl = document.createElement('span');
     this.statusBadgeEl.className = 'panel-data-badge';
     this.statusBadgeEl.style.display = 'none';
-    this.header.appendChild(this.statusBadgeEl);
+    headerActions.appendChild(this.statusBadgeEl);
 
     this.refreshButtonEl = document.createElement('button');
     this.refreshButtonEl.type = 'button';
@@ -265,14 +339,8 @@ export class Panel {
       void this.triggerRefresh();
     };
     this.refreshButtonEl.addEventListener('click', this.refreshClickHandler);
-    this.header.appendChild(this.refreshButtonEl);
-
-    if (options.showCount) {
-      this.countEl = document.createElement('span');
-      this.countEl.className = 'panel-count';
-      this.countEl.textContent = '0';
-      this.header.appendChild(this.countEl);
-    }
+    headerActions.appendChild(this.refreshButtonEl);
+    this.header.appendChild(headerActions);
 
     this.content = document.createElement('div');
     this.content.className = 'panel-content';
@@ -347,6 +415,78 @@ export class Panel {
     tryReconcile(attempts);
   }
 
+  private clearAutoMinHeight(): void {
+    this.element.style.removeProperty('min-height');
+  }
+
+  private syncAutoMinHeight(): void {
+    if (!this.autoMinHeightMeasure) return;
+    if (this.isResizing || hasSavedPanelSpan(this.panelId)) {
+      this.clearAutoMinHeight();
+      return;
+    }
+
+    const measuredHeight = this.autoMinHeightMeasure();
+    if (!measuredHeight || !Number.isFinite(measuredHeight)) {
+      this.clearAutoMinHeight();
+      return;
+    }
+
+    const naturalSpan = getDefaultRowSpan(this.element);
+    const desiredSpan = getAutoRowSpanForHeight(this.element, measuredHeight);
+    if (desiredSpan === naturalSpan) {
+      clearRowSpanClass(this.element);
+      this.element.classList.remove('resized');
+    } else {
+      setAutoRowSpanClass(this.element, desiredSpan);
+    }
+
+    this.element.style.minHeight = `${Math.max(200, Math.round(measuredHeight))}px`;
+  }
+
+  protected requestAutoMinHeightSync(): void {
+    if (!this.autoMinHeightMeasure) return;
+    if (this.autoMinHeightRaf !== null) {
+      cancelAnimationFrame(this.autoMinHeightRaf);
+    }
+    this.autoMinHeightRaf = requestAnimationFrame(() => {
+      this.autoMinHeightRaf = null;
+      this.syncAutoMinHeight();
+    });
+  }
+
+  protected enableAutoMinHeight(measure: () => number | null): void {
+    this.autoMinHeightMeasure = measure;
+    if (typeof ResizeObserver === 'function') {
+      if (!this.autoMinHeightObserver) {
+        this.autoMinHeightObserver = new ResizeObserver(() => this.requestAutoMinHeightSync());
+      }
+      this.autoMinHeightObserver.observe(this.element);
+    } else if (!this.autoMinHeightResizeHandler) {
+      this.autoMinHeightResizeHandler = () => this.requestAutoMinHeightSync();
+      window.addEventListener('resize', this.autoMinHeightResizeHandler);
+    }
+
+    this.requestAutoMinHeightSync();
+  }
+
+  protected disableAutoMinHeight(): void {
+    this.autoMinHeightMeasure = null;
+    if (this.autoMinHeightObserver) {
+      this.autoMinHeightObserver.disconnect();
+      this.autoMinHeightObserver = null;
+    }
+    if (this.autoMinHeightResizeHandler) {
+      window.removeEventListener('resize', this.autoMinHeightResizeHandler);
+      this.autoMinHeightResizeHandler = null;
+    }
+    if (this.autoMinHeightRaf !== null) {
+      cancelAnimationFrame(this.autoMinHeightRaf);
+      this.autoMinHeightRaf = null;
+    }
+    this.clearAutoMinHeight();
+  }
+
   private addRowTouchDocumentListeners(): void {
     if (this.onTouchMove) {
       document.addEventListener('touchmove', this.onTouchMove, { passive: false });
@@ -400,6 +540,7 @@ export class Panel {
       const currentSpan = getRowSpan(this.element);
       savePanelSpan(this.panelId, currentSpan);
       trackPanelResized(this.panelId, currentSpan);
+      this.requestAutoMinHeightSync();
     };
 
     this.onRowWindowBlur = () => this.onRowMouseUp?.();
@@ -407,6 +548,7 @@ export class Panel {
     const onMouseDown = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      this.clearAutoMinHeight();
       this.isResizing = true;
       this.startY = e.clientY;
       this.startRowSpan = getRowSpan(this.element);
@@ -438,6 +580,7 @@ export class Panel {
       e.stopPropagation();
       const touch = e.touches[0];
       if (!touch) return;
+      this.clearAutoMinHeight();
       this.isResizing = true;
       this.startY = touch.clientY;
       this.startRowSpan = getRowSpan(this.element);
@@ -472,6 +615,7 @@ export class Panel {
       const currentSpan = getRowSpan(this.element);
       savePanelSpan(this.panelId, currentSpan);
       trackPanelResized(this.panelId, currentSpan);
+      this.requestAutoMinHeightSync();
     };
     this.onTouchCancel = this.onTouchEnd;
 
@@ -820,10 +964,10 @@ export class Panel {
    * Reset panel height to default
    */
   public resetHeight(): void {
-    this.element.classList.remove('resized', 'span-1', 'span-2', 'span-3', 'span-4');
-    const spans = loadPanelSpans();
-    delete spans[this.panelId];
-    localStorage.setItem(PANEL_SPANS_KEY, JSON.stringify(spans));
+    clearRowSpanClass(this.element);
+    this.element.classList.remove('resized');
+    clearPanelSpan(this.panelId);
+    this.requestAutoMinHeightSync();
   }
 
   public resetWidth(): void {
@@ -841,6 +985,7 @@ export class Panel {
 
   public destroy(): void {
     this.abortController.abort();
+    this.disableAutoMinHeight();
     if (this.colSpanReconcileRaf !== null) {
       cancelAnimationFrame(this.colSpanReconcileRaf);
       this.colSpanReconcileRaf = null;

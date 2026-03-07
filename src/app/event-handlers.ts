@@ -15,6 +15,7 @@ import {
   buildMapUrl,
   debounce,
   saveToStorage,
+  syncPanelsEmptyState,
   ExportPanel,
   getCurrentTheme,
   setTheme,
@@ -1037,5 +1038,6 @@ export class EventHandlerManager implements AppModule {
       const panel = this.ctx.panels[key];
       panel?.toggle(config.enabled);
     });
+    syncPanelsEmptyState();
   }
 }

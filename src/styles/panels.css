@@ -4,6 +4,23 @@
    on every panel refresh (PERF-012).
    ========================================================== */
 
+.panel-content > [class*="-panel-content"] {
+  font-size: var(--panel-text-size);
+  line-height: var(--panel-line-height);
+}
+
+.panel-content table th {
+  padding-top: 7px;
+  padding-bottom: 7px;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.panel-content table td {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 /* ----------------------------------------------------------
    Satellite Fires Panel
    ---------------------------------------------------------- */
@@ -898,21 +915,22 @@
    Security Advisories Panel
    ---------------------------------------------------------- */
 .sa-panel-content {
-  font-size: 12px;
+  font-size: var(--panel-text-size);
+  line-height: var(--panel-line-height);
 }
 
 .sa-summary {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
 .sa-summary-item {
-  background: var(--overlay-subtle);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 8px 6px;
+  background: color-mix(in srgb, var(--overlay-light) 72%, transparent);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 10px 8px;
   text-align: center;
 }
 
@@ -925,11 +943,11 @@
 
 .sa-summary-label {
   display: block;
-  font-size: 8px;
+  font-size: 9px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 2px;
+  letter-spacing: 0.06em;
+  margin-top: 3px;
 }
 
 .sa-summary-item.sa-level-dnt .sa-summary-count {
@@ -946,20 +964,20 @@
 
 .sa-filters {
   display: flex;
-  gap: 2px;
-  margin-bottom: 6px;
+  gap: 6px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
 }
 
 .sa-filter {
-  background: transparent;
-  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--overlay-light) 70%, transparent);
+  border: 1px solid var(--panel-border);
   color: var(--text-dim);
-  padding: 3px 10px;
-  font-size: 10px;
+  padding: 5px 12px;
+  font-size: 11px;
   cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.15s;
+  border-radius: 999px;
+  transition: all 0.18s ease;
 }
 
 .sa-filter:hover {
@@ -968,22 +986,23 @@
 }
 
 .sa-filter-active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--panel-border) 70%, var(--accent));
   color: var(--accent);
 }
 
 .sa-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
 
 .sa-item {
-  padding: 8px;
-  border-radius: 4px;
-  border-left: 3px solid var(--border);
-  background: var(--overlay-subtle);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  border-left: 4px solid var(--border);
+  background: color-mix(in srgb, var(--overlay-light) 65%, transparent);
 }
 
 .sa-item.sa-level-dnt {
@@ -1010,15 +1029,15 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .sa-badge {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
-  padding: 2px 6px;
-  border-radius: 3px;
-  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -1048,17 +1067,17 @@
 }
 
 .sa-source {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-muted);
   margin-left: auto;
 }
 
 .sa-title {
   display: block;
-  color: var(--text-secondary);
+  color: var(--text);
   text-decoration: none;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .sa-title:hover {
@@ -1067,37 +1086,39 @@
 }
 
 .sa-time {
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-muted);
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 .sa-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--border-subtle);
 }
 
 .sa-footer-source {
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-muted);
 }
 
 .sa-refresh-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  padding: 3px 10px;
-  font-size: 10px;
+  background: color-mix(in srgb, var(--overlay-light) 75%, transparent);
+  border: 1px solid var(--panel-border);
+  color: var(--text-secondary);
+  padding: 5px 12px;
+  font-size: 11px;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: 999px;
+  transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease;
 }
 
 .sa-refresh-btn:hover {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--panel-border) 70%, var(--accent));
+  background: color-mix(in srgb, var(--overlay-medium) 72%, transparent);
   color: var(--accent);
 }
 

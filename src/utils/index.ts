@@ -151,6 +151,26 @@ export function saveToStorage<T>(key: string, value: T): void {
   }
 }
 
+export function syncPanelsEmptyState(gridId = 'panelsGrid', bottomGridId = 'mapBottomGrid'): void {
+  const panelsGrid = document.getElementById(gridId);
+  if (!panelsGrid) return;
+
+  const emptyState = panelsGrid.querySelector<HTMLElement>('[data-panels-empty-state]');
+  if (!emptyState) return;
+
+  const bottomGrid = document.getElementById(bottomGridId);
+  const allPanels = [
+    ...Array.from(panelsGrid.querySelectorAll<HTMLElement>('.panel')),
+    ...Array.from(bottomGrid?.querySelectorAll<HTMLElement>('.panel') ?? []),
+  ];
+
+  const hasVisiblePanels = allPanels.some((panel) => !panel.classList.contains('hidden'));
+
+  emptyState.hidden = hasVisiblePanels;
+  emptyState.setAttribute('aria-hidden', hasVisiblePanels ? 'true' : 'false');
+  panelsGrid.classList.toggle('panels-grid-empty', !hasVisiblePanels);
+}
+
 export function generateId(): string {
   return `id-${crypto.randomUUID()}`;
 }

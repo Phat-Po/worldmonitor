@@ -83,7 +83,7 @@ export class LiveWebcamsPanel extends Panel {
   private readonly forceSingleView = !isDesktopRuntime() && isMobileDevice();
 
   constructor() {
-    super({ id: 'live-webcams', title: t('panels.liveWebcams'), className: 'panel-wide' });
+    super({ id: 'live-webcams', title: t('panels.liveWebcams'), className: 'panel-wide panel-video panel-video-webcams' });
 
     // Mobile: force single-cam view. 4 iframes at once is a battery + performance disaster.
     if (this.forceSingleView) {
@@ -91,6 +91,7 @@ export class LiveWebcamsPanel extends Panel {
     }
     this.createFullscreenButton();
     this.createToolbar();
+    this.enableAutoMinHeight(() => this.measureIdealPanelHeight());
     this.setupIntersectionObserver();
     this.setupIdleDetection();
     subscribeStreamQualityChange(() => this.render());
@@ -100,6 +101,24 @@ export class LiveWebcamsPanel extends Panel {
     });
     this.render();
     document.addEventListener('keydown', this.boundFullscreenEscHandler);
+  }
+
+  private measureIdealPanelHeight(): number | null {
+    if (!this.element.isConnected) return null;
+
+    const contentStyle = window.getComputedStyle(this.content);
+    const horizontalPadding = (parseFloat(contentStyle.paddingLeft || '0') || 0) + (parseFloat(contentStyle.paddingRight || '0') || 0);
+    const verticalPadding = (parseFloat(contentStyle.paddingTop || '0') || 0) + (parseFloat(contentStyle.paddingBottom || '0') || 0);
+    const mediaWidth = this.content.clientWidth - horizontalPadding;
+    if (mediaWidth <= 0) return null;
+
+    const headerHeight = this.header.getBoundingClientRect().height;
+    const toolbarHeight = this.toolbar?.getBoundingClientRect().height ?? 0;
+    const switcherHeight = (this.content.querySelector('.webcam-switcher') as HTMLElement | null)?.getBoundingClientRect().height ?? 0;
+    const videoHeight = mediaWidth * (9 / 16);
+    const handleAllowance = 14;
+
+    return headerHeight + toolbarHeight + verticalPadding + switcherHeight + videoHeight + handleAllowance;
   }
 
   private createFullscreenButton(): void {
@@ -260,6 +279,7 @@ export class LiveWebcamsPanel extends Panel {
 
     if (!this.isVisible || this.isIdle) {
       this.content.innerHTML = `<div class="webcam-placeholder">${escapeHtml(t('components.webcams.paused'))}</div>`;
+      this.requestAutoMinHeightSync();
       return;
     }
 
@@ -335,6 +355,7 @@ export class LiveWebcamsPanel extends Panel {
     });
 
     this.content.appendChild(grid);
+    this.requestAutoMinHeightSync();
   }
 
   private renderSingle(): void {
@@ -373,6 +394,7 @@ export class LiveWebcamsPanel extends Panel {
 
     this.content.appendChild(wrapper);
     this.content.appendChild(switcher);
+    this.requestAutoMinHeightSync();
   }
 
   private destroyIframes(): void {

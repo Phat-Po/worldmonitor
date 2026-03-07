@@ -125,10 +125,10 @@ export class NewsPanel extends Panel {
     this.summaryBtn.title = t('components.newsPanel.summarize');
     this.summaryBtn.addEventListener('click', () => this.handleSummarize());
 
-    // Insert before count element (use inherited this.header directly)
-    const countEl = this.header.querySelector('.panel-count');
-    if (countEl) {
-      this.header.insertBefore(this.summaryBtn, countEl);
+    // Panel header was split into left/content actions, so insert into the actions group when present.
+    const headerActions = this.header.querySelector('.panel-header-actions');
+    if (headerActions) {
+      headerActions.insertBefore(this.summaryBtn, headerActions.firstChild);
     } else {
       this.header.appendChild(this.summaryBtn);
     }
